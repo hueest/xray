@@ -1,0 +1,22 @@
+---
+/*
+ * Overrides Starlight's Header. The home page is the splash hero — the giant
+ * wordmark carries the brand, so it needs no nav bar. On every other route,
+ * render Starlight's default Header unchanged.
+ *
+ * On home we render nothing into PageFrame's <header> slot; the empty <header>
+ * wrapper is then collapsed by a global rule in theme.css
+ * (`.header:not(:has(*))`), which only ever matches this empty-on-home case.
+ */
+import Default from '@astrojs/starlight/components/Header.astro'
+
+const isHome = Astro.url.pathname === '/'
+---
+
+{
+  !isHome && (
+    <Default>
+      <slot />
+    </Default>
+  )
+}

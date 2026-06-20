@@ -1,0 +1,569 @@
+/* xray — "The Reading Room": one radiograph palette; light mode is the dark, inverted.
+   Unlayered, so it wins over Starlight's @layer starlight.base defaults in both themes. */
+
+:root {
+  --xrw-space-2xs: 0.25rem;
+  --xrw-space-xs: 0.5rem;
+  --xrw-space-sm: 0.75rem;
+  --xrw-space-md: 1rem;
+  --xrw-space-lg: 1.5rem;
+  --xrw-block: clamp(1.75rem, 4vw, 2.75rem);
+  --xrw-section: clamp(3rem, 7vw, 5rem);
+
+  /* Type scale. Fonts come from the Astro Fonts API (<Font> in Head.astro), each with
+     a metric-matched fallback so the web-font swap causes no layout shift. */
+  --xrw-text-xs: 0.75rem;
+  --xrw-text-sm: 0.875rem;
+  --xrw-text-base: 1rem;
+  --xrw-text-md: 1.125rem;
+  --xrw-text-lg: 1.25rem;
+  --xrw-text-xl: clamp(1.25rem, 1rem + 1vw, 1.6rem);
+  --xrw-text-2xl: clamp(1.5rem, 1.2rem + 1.4vw, 1.9rem);
+  --xrw-text-3xl: clamp(1.75rem, 1.2rem + 2vw, 2.6rem);
+  --xrw-display: clamp(1.5rem, 1rem + 2.4vw, 2.5rem);
+
+  /* Two corner radii: sm for small chips/markers, md for every box (cards, panels, code,
+     demo). */
+  --xrw-radius-sm: 3px;
+  --xrw-radius-md: 8px;
+  --xrw-radius-full: 999px;
+
+  --xrw-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --xrw-dur-state: 160ms;
+
+  /* Comfortable hit target for coarse pointers (WCAG 2.5.5). */
+  --xrw-touch-min: 44px;
+
+  /* Glow — depth is light, not shadow. */
+  --xrw-glow-text: 0 0 6px color-mix(in oklab, var(--xrw-accent), transparent 87%);
+  --xrw-glow-head:
+    0 0 3px color-mix(in oklab, var(--xrw-bone), transparent 50%),
+    0 0 18px color-mix(in oklab, var(--xrw-accent), transparent 60%);
+  --xrw-glow-hero:
+    0 0 5px color-mix(in oklab, var(--xrw-bone), transparent 12%),
+    0 0 24px color-mix(in oklab, var(--xrw-accent), transparent 36%),
+    0 0 64px color-mix(in oklab, var(--xrw-accent), transparent 52%);
+  --xrw-glow-box-out: 0 0 14px -3px color-mix(in oklab, var(--xrw-accent), transparent 66%);
+  --xrw-glow-box-in: inset 0 0 18px -6px color-mix(in oklab, var(--xrw-accent), transparent 68%);
+
+  /* Hand Starlight our type. Tighter body leading than Starlight's loose 1.75 default —
+     it drives body text, lists, steps, and code blocks (EC codeLineHeight). Long-form
+     prose opts back up to 1.6 where it's set. */
+  --sl-font: var(--xrw-font-body);
+  --sl-font-mono: var(--xrw-font-mono);
+  --sl-line-height: 1.5;
+}
+
+/* The radiograph palette: --xrw-* is the semantic palette for custom components; the
+   --sl-color-* block maps the same film onto Starlight's chrome. */
+:root,
+::backdrop {
+  color-scheme: dark;
+
+  /* Radiograph steel-blue and crimson share one base lightness (0.62) so the light-mode
+     negative (L → 1−L) can't flip which one reads lighter — they stay matched in both
+     modes. Chroma still differs (red holds more in gamut); blue is dialed to "x-ray plate
+     blue", not a pure web-blue. */
+  --xrw-accent: oklch(0.62 0.11 246);
+  --xrw-crimson: oklch(0.62 0.17 25);
+  --xrw-bg: oklch(0.09 0.02 256);
+  --xrw-surface: oklch(0.13 0.02 254);
+  --xrw-surface-2: oklch(0.17 0.02 252);
+  /* The brightest text carries a hair of alpha so it reads as exposed-on-film, not a flat
+     sticker — the dark bg + grain show through the glyphs. Alpha survives the light-mode
+     invert (it flips RGB, not alpha). Dim/muted tokens stay opaque to hold their contrast. */
+  --xrw-ink: oklch(0.94 0.012 245 / 0.9);
+  --xrw-muted: oklch(0.69 0.02 251);
+  --xrw-line: oklch(0.28 0.02 253);
+  --xrw-bone: oklch(0.95 0.012 244 / 0.78);
+  --xrw-vignette: oklch(0.04 0.02 258 / 0.9);
+  --xrw-grain: 0.11;
+  --xrw-shell-bg: color-mix(in oklab, var(--xrw-bg), black 16%);
+  --xrw-shell-chrome: color-mix(in oklab, var(--xrw-bg), black 28%);
+  --xrw-shell-control: color-mix(in oklab, var(--xrw-bg), var(--xrw-surface) 32%);
+
+  /* Brightest Starlight text matches --xrw-bone's filmic alpha (the headings/strong it
+     colours are the docs' counterpart to the catchphrase). */
+  --sl-color-white: oklch(0.96 0.01 244 / 0.78);
+  --sl-color-gray-1: oklch(0.91 0.014 246 / 0.9);
+  --sl-color-gray-2: oklch(0.8 0.018 248 / 0.9);
+  --sl-color-gray-3: oklch(0.69 0.02 251);
+  --sl-color-gray-4: oklch(0.5 0.02 252);
+  --sl-color-gray-5: oklch(0.33 0.02 253);
+  --sl-color-gray-6: oklch(0.16 0.02 255);
+  --sl-color-black: oklch(0.09 0.02 256);
+
+  /* The Starlight accent ramp tracks the brand accent: mid IS --xrw-accent; high is a lighter
+     step for link text (readable on the dark field); low is the dark accent wash. */
+  --sl-color-accent-low: oklch(0.3 0.05 246);
+  --sl-color-accent: var(--xrw-accent);
+  --sl-color-accent-high: oklch(0.74 0.1 246);
+  --sl-color-text-invert: var(--xrw-bg);
+
+  --sl-color-bg-nav: var(--xrw-shell-chrome);
+  --sl-color-bg-sidebar: var(--xrw-shell-chrome);
+  --sl-color-bg-inline-code: var(--xrw-surface-2);
+  --sl-color-hairline: var(--xrw-line);
+  --sl-color-hairline-light: var(--xrw-line);
+}
+
+/* Light = the negative: invert the whole document, re-invert raster media so it reads
+   normally. The filter MUST sit on :root (html); on body it checkerboards the page. */
+:root[data-theme='light'] {
+  filter: invert(1) hue-rotate(180deg);
+}
+:root[data-theme='light'] :is(img, video, [data-xr-keep]) {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Page-wide film: vignette edge, grain, and the faint all-text glow. Overlays are fixed
+   + pointer-events:none with no blend/backdrop-filter, so they never repaint on scroll
+   (those properties force a per-frame full-viewport repaint — scroll jank). */
+body {
+  text-shadow: var(--xrw-glow-text);
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: radial-gradient(
+    150% 120% at 50% 38%,
+    transparent 52%,
+    var(--xrw-vignette) 100%
+  );
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: var(--xrw-grain);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='g'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%201%200%200%200%200%201%200%200%200%200%201%200%200%200%201%200'/%3E%3C/filter%3E%3Crect%20width='100%25'%20height='100%25'%20filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/* Home has no nav bar: the Header override renders nothing, so collapse the empty wrapper. */
+.header:not(:has(*)) {
+  display: none;
+}
+
+/* Docs shell: one dark film field, not a stack of bright chrome strips. */
+header.header {
+  border-bottom: 0;
+  background-color: var(--xrw-shell-chrome);
+}
+.sidebar-pane {
+  background-color: var(--xrw-shell-bg);
+}
+.content-panel + .content-panel {
+  border-top: 0;
+}
+@media (min-width: 50rem) {
+  .sidebar-pane {
+    border-inline-end: 0;
+    background-color: var(--xrw-shell-chrome);
+  }
+}
+@media (min-width: 72rem) {
+  .right-sidebar {
+    border-inline-start: 0;
+  }
+}
+
+/* Docs wordmark: use the real logo and let it catch like the hero light box. */
+.site-title {
+  isolation: isolate;
+  line-height: 0;
+  max-width: min(7rem, 28vw);
+  overflow: clip;
+  background: var(--xrw-shell-chrome);
+}
+.site-title img {
+  height: 2.45rem;
+  width: auto;
+  max-width: 100%;
+  mix-blend-mode: screen;
+  opacity: 1;
+  animation:
+    xr-logo-on 0.7s 0.25s backwards,
+    xr-logo-flicker 14s 1.15s infinite;
+  animation-timing-function: steps(1, jump-end);
+}
+:root[data-theme='light'] .site-title img {
+  filter: none;
+}
+@media (min-width: 50rem) {
+  .site-title img {
+    height: 2.65rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-title img {
+    animation: none;
+  }
+}
+@keyframes xr-logo-on {
+  0% {
+    opacity: 0.04;
+  }
+  22% {
+    opacity: 0.95;
+  }
+  26% {
+    opacity: 0.05;
+  }
+  48% {
+    opacity: 1;
+  }
+  52% {
+    opacity: 0.08;
+  }
+  70% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 0.3;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes xr-logo-flicker {
+  0%,
+  29.8%,
+  31.4%,
+  67.8%,
+  68.9%,
+  100% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.25;
+  }
+  30.2% {
+    opacity: 1;
+  }
+  30.5% {
+    opacity: 0.5;
+  }
+  30.7% {
+    opacity: 1;
+  }
+  31% {
+    opacity: 0.18;
+  }
+  31.2% {
+    opacity: 1;
+  }
+  68% {
+    opacity: 0.4;
+  }
+  68.2% {
+    opacity: 1;
+  }
+  68.5% {
+    opacity: 0.6;
+  }
+  68.7% {
+    opacity: 1;
+  }
+}
+
+/* Starlight leaves this divider even when our theme picker renders nothing. */
+.right-group .social-icons::after {
+  display: none;
+}
+.right-group .social-icons,
+.right-group {
+  gap: var(--xrw-space-sm);
+}
+.right-group .social-icons a {
+  border-radius: var(--xrw-radius-sm);
+  color: var(--xrw-bone);
+}
+
+button[data-open-modal] {
+  color: var(--xrw-bone);
+}
+@media (min-width: 50rem) {
+  button[data-open-modal] {
+    border-color: transparent;
+    border-radius: var(--xrw-radius-sm);
+    background-color: var(--xrw-shell-control);
+    box-shadow: none;
+  }
+}
+starlight-menu-button button {
+  width: var(--xrw-touch-min);
+  height: var(--xrw-touch-min);
+  border: 1px solid transparent;
+  border-radius: var(--xrw-radius-sm);
+  background-color: transparent;
+  color: var(--xrw-bone);
+  box-shadow: none;
+}
+starlight-menu-button button[aria-expanded='true'] {
+  border-color: var(--xrw-line);
+  background-color: var(--xrw-shell-control);
+  color: var(--xrw-bone);
+}
+
+mobile-starlight-toc nav {
+  border-top: 0;
+  background-color: var(--xrw-shell-chrome);
+}
+mobile-starlight-toc summary {
+  border-bottom: 0;
+}
+mobile-starlight-toc .toggle {
+  border-color: color-mix(in oklab, var(--xrw-line), transparent 28%);
+  border-radius: var(--xrw-radius-sm);
+  background-color: var(--xrw-shell-control);
+}
+mobile-starlight-toc .dropdown {
+  border: 0;
+  background-color: var(--xrw-shell-bg);
+  box-shadow: var(--xrw-glow-box-out);
+}
+
+#starlight__sidebar ul ul li {
+  border-inline-start-color: color-mix(in oklab, var(--xrw-line), transparent 45%);
+}
+#starlight__sidebar a[aria-current='page'] {
+  border-radius: 0;
+  background: linear-gradient(to right, var(--xrw-accent), transparent 72%) 0 100% / 100% 1px
+    no-repeat;
+  box-shadow: none;
+  color: var(--sl-color-accent-high);
+  text-shadow: var(--xrw-glow-text);
+}
+.mobile-preferences {
+  border-top: 0;
+}
+
+.site-title,
+.hero h1 {
+  font-family: var(--xrw-font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+:is(h1, h2, h3),
+.site-title {
+  text-shadow: var(--xrw-glow-head);
+}
+.hero h1 {
+  text-shadow: var(--xrw-glow-hero);
+}
+
+.card,
+.starlight-aside {
+  box-shadow: var(--xrw-glow-box-out), var(--xrw-glow-box-in);
+}
+/* Code blocks get one soft outer edge only — inner + outer stacked on both figure.frame
+   and its pre reads as a haze. */
+.sl-markdown-content figure.frame {
+  box-shadow: var(--xrw-glow-box-out);
+}
+
+/* Asides: remap onto the palette; replace Starlight's 4px colored left-stripe (a brand
+   ban) with a full hairline border and a faint same-hue tint. */
+.starlight-aside {
+  border: 1px solid var(--sl-color-asides-border);
+  border-radius: var(--xrw-radius-md);
+  background-color: color-mix(in oklab, var(--sl-color-asides-border), transparent 90%);
+}
+.starlight-aside--note,
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--xrw-accent);
+  --sl-color-asides-border: var(--xrw-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+  --sl-color-asides-text-accent: var(--xrw-crimson);
+  --sl-color-asides-border: var(--xrw-crimson);
+}
+
+/* Body reading size, site-wide (docs, guides, splash). Starlight leaves content at the
+   inherited 1rem; bump it to the larger 1.125rem the marketing prose used. Headings keep
+   their own sizes; code blocks are pinned just below. */
+.sl-markdown-content {
+  font-size: var(--xrw-text-md);
+}
+/* Code blocks opt out of the body size. Expressive Code carries `not-content`, so
+   Starlight's `pre` rule skips it and it has no size of its own — it would inherit the
+   1.125rem body and read chunky. Pin it to 1rem (its size before the body bump). */
+.expressive-code {
+  font-size: var(--xrw-text-base);
+}
+
+/* The home renders a full-bleed .site-footer, so drop trailing bottom padding and let
+   the footer end the page cleanly. */
+[data-has-hero]:has(.site-footer) {
+  & .content-panel,
+  & main {
+    padding-bottom: 0;
+  }
+}
+
+/* Home (splash) layout: a ~50rem content column; hero breaks out full-bleed.
+   Scoped to splash pages with a hero so the docs are untouched. */
+[data-has-hero] {
+  & .sl-markdown-content {
+    max-width: 50rem;
+    margin-inline: auto;
+    & h2 {
+      margin-top: var(--xrw-section);
+      font-size: var(--xrw-text-3xl);
+      letter-spacing: -0.02em;
+      /* The one emphasized word in a section heading carries the steel accent — upright, not
+         italic (the slant read awkward mid-heading). */
+      & em {
+        font-style: normal;
+        color: var(--xrw-accent);
+      }
+    }
+    /* Marketing prose gets a touch more leading than the 1.5 body base; its size now comes
+       from the site-wide .sl-markdown-content rule above. */
+    & > p {
+      line-height: 1.6;
+    }
+  }
+}
+
+/* Chrome's mobile tap highlight is a cyan fill clipped to text fragments, which fights the
+   edge-strike treatment below. Keep touch feedback in the brand system instead. */
+:is(a, button, summary, [role='button'], [role='tab']) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Brand button hover/active, site-wide: the edge lights to accent with a backlit glow,
+   struck on with a quick flicker (no transform/raise). Every button gets it — the hero
+   actions, Go-deeper cards, docs pagination, action buttons, and Starlight's chrome (copy,
+   search, sidebar). Borderless chrome buttons just show the glow strike. Excluded: the
+   comparison slider handle (its own glow) and the demo's decorative Add-to-cart. The wide
+   transition list lets chrome buttons keep their own bg/colour hovers under the brand edge;
+   reduced-motion gets the resting state instantly. */
+:is(button, .hero-cta, .llms-link, .sl-link-card, .pagination-links a, .action):not(
+  .compare-handle,
+  .product-buy
+) {
+  transition:
+    border-color var(--xrw-dur-state) var(--xrw-ease),
+    box-shadow var(--xrw-dur-state) var(--xrw-ease),
+    background-color var(--xrw-dur-state) var(--xrw-ease),
+    color var(--xrw-dur-state) var(--xrw-ease);
+  &:is(:hover, :active) {
+    border-color: var(--xrw-accent);
+    box-shadow: var(--xrw-glow-box-out);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--xrw-accent);
+    outline-offset: 3px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    &:is(:hover, :active) {
+      animation: xr-edge-strike 0.2s steps(1, jump-end);
+    }
+  }
+}
+@keyframes xr-edge-strike {
+  0% {
+    border-color: var(--xrw-line);
+    box-shadow: none;
+  }
+  25% {
+    border-color: var(--xrw-accent);
+    box-shadow: var(--xrw-glow-box-out);
+  }
+  40% {
+    border-color: var(--xrw-line);
+    box-shadow: none;
+  }
+  65% {
+    border-color: var(--xrw-accent);
+    box-shadow: var(--xrw-glow-box-out);
+  }
+  78% {
+    border-color: var(--xrw-line);
+    box-shadow: none;
+  }
+  100% {
+    border-color: var(--xrw-accent);
+    box-shadow: var(--xrw-glow-box-out);
+  }
+}
+/* Make the whole Go-deeper card the click target (some Starlight versions leave only the
+   ~22px title clickable — sub-44px, WCAG 2.5.8). */
+.sl-link-card {
+  position: relative;
+}
+.sl-link-card a::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* Get-started Steps. Starlight stacks steps flush (margin:0); give each room to breathe.
+   padding (not margin) keeps the connector guide continuous — the next step starts where
+   the padding ends, so the guide runs unbroken through the gap. */
+[data-has-hero] .sl-steps > li {
+  padding-bottom: var(--xrw-block);
+  &:last-child {
+    padding-bottom: 0;
+  }
+  /* Space each step's content (code blocks, tabs, the HUD) off its instruction line — they
+     otherwise sit flush against the text. */
+  & > * + * {
+    margin-top: var(--xrw-space-md);
+  }
+  /* On phones, drop the connector line and its gutter and inline the step number, so the
+     code blocks reclaim the full width instead of sitting in a ~2.5rem indent. */
+  @media (max-width: 30rem) {
+    padding-inline-start: 0;
+    &::after {
+      display: none;
+    }
+    &::before {
+      position: static;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-inline-end: var(--xrw-space-sm);
+      vertical-align: -0.3em;
+    }
+  }
+}
+
+/* Tabs, site-wide: no full divider under the tablist. The active tab is marked by the accent
+   colour + the head glow + a hairline that fades out at both ends — no box-shadow, and no
+   weight change (Starlight's font-weight:600 widened the label and reflowed the row). */
+.sl-markdown-content {
+  & [role='tablist'] {
+    border-bottom: 0;
+  }
+  & .tab > [role='tab'] {
+    position: relative;
+    white-space: nowrap;
+    box-shadow: none;
+    &[aria-selected='true'] {
+      font-weight: inherit;
+      color: var(--xrw-accent);
+      text-shadow: var(--xrw-glow-head);
+      &::after {
+        content: '';
+        position: absolute;
+        inset-inline: 0;
+        bottom: 0;
+        height: 1px;
+        background: linear-gradient(to right, transparent, var(--xrw-accent), transparent);
+      }
+    }
+  }
+}

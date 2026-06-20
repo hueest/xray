@@ -1,0 +1,37 @@
+# xray
+
+> Auto-captured skeleton loading screens for Vite. xray captures the real
+> rendered DOM of your components as you browse your own dev server, then
+> renders faithful skeleton loading states from those captures — no
+> hand-drawn placeholders, no separate headless browser, no fixed-height or
+> absolute-position hacks.
+
+xray is a Vite plugin (`@hueest/xray`) with a React adapter today; more
+framework adapters are planned. The mental model is radiographic: a Plate is
+the stored capture, a Capture is the act of serializing a rendered subtree
+into a Plate, a Stitch nests one Plate inside another, a View is a captured
+viewport-width band, a Projection is a JS-driven structural variant of a
+View, and the Light Box previews skeletons on demand.
+
+## Docs
+
+- [Home](https://xray-js.dev/): overview, how it works, install.
+- [Responsive & Views](https://xray-js.dev/guides/responsive-views/): capturing multiple width bands and carrying each View whole in the one Plate.
+- [Nested skeletons](https://xray-js.dev/guides/nested-skeletons/): Stitches — independent captures that hold the layout and reveal as one.
+- [The HUD & Light Box](https://xray-js.dev/guides/hud-light-box/): the dev overlay for coverage and previewing skeletons.
+- [Capture all views](https://xray-js.dev/guides/capture-all/): sweeping every detected width band in one click with the companion extension.
+- [Fixtures](https://xray-js.dev/guides/fixtures/): recording a component's data once and replaying it for deterministic captures.
+- [Capture customization](https://xray-js.dev/guides/capture-customization/): Hints and the Walker — shape what a capture keeps, collapses, or drops.
+- [Display timing](https://xray-js.dev/guides/display-timing/): when the skeleton appears, how long it stays, and how it swaps.
+- [Theming](https://xray-js.dev/guides/theming/): styling the bones and the timing with CSS custom properties.
+- [Architecture](https://xray-js.dev/architecture/): the two halves joined by one artifact — Capture writes the Plate, Render ships it.
+- [Glossary](https://xray-js.dev/glossary/): every term of art, defined.
+- [Roadmap](https://xray-js.dev/roadmap/): what's next and the known limits.
+- [Status](https://xray-js.dev/status/): where xray is in its life today.
+
+## API reference
+
+- [@hueest/xray](https://xray-js.dev/reference/api/xray/): the Vite plugin entry point.
+- [@hueest/xray/core](https://xray-js.dev/reference/api/core/): the framework-neutral capture/render core.
+- [@hueest/xray/react](https://xray-js.dev/reference/api/react/): the React `<Skeleton>` adapter.
+- [@hueest/xray/virtual](https://xray-js.dev/reference/api/virtual/): the `virtual:xray/plates/*` module types.

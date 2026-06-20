@@ -1,0 +1,10 @@
+node_modules
+dist
+# build-time mirror of the root LICENSE (tsdown copy)
+packages/xray/LICENSE
+coverage
+*.tsbuildinfo
+*.log
+.DS_Store
+*.tgz
+example-capture.json

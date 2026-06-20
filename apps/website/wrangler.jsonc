@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Static site (Astro/Starlight) on Cloudflare Workers via Static Assets —
+  // assets-only, no Worker script. Build to ./dist, then `wrangler deploy`.
+  "name": "xray-website",
+  "compatibility_date": "2026-06-16",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+  },
+}

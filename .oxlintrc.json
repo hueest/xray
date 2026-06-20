@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn"
+  },
+  "options": {
+    "typeAware": true,
+    "typeCheck": true
+  },
+  "rules": {
+    "typescript/no-unnecessary-type-parameters": "warn",
+    "typescript/no-unsafe-type-assertion": "warn",
+    "eslint/no-underscore-dangle": [
+      "error",
+      {
+        "allow": [
+          "__XRAY__",
+          "__xrayCapture",
+          "__xrayAudit",
+          "__xrayClient",
+          "__xrayAddCapture",
+          "__xrayMerge"
+        ]
+      }
+    ]
+  },
+  "ignorePatterns": ["dist"]
+}

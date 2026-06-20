@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # No version input: reads "packageManager" from package.json.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Fresh-checkout codegen the gates depend on:
+      # - @hueest/xray build: workspace exports resolve to dist/* (astro check needs them)
+      # - wxt prepare: Chrome/MV3 type stubs for the extension
+      # - astro sync: astro:content types + typedoc-generated content
+      - name: Prepare generated code
+        run: pnpm --filter @hueest/xray build && pnpm --filter xray-extension exec wxt prepare && pnpm --filter xray-website exec astro sync
+
+      - name: Format (drift check)
+        run: pnpm run format && git diff --exit-code
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+  peer-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - react: 18
+            vite: 8
+          - react: 19
+            vite: 7
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Ephemeral: mutates the job's node_modules only, never committed.
+      # @types/react stays on v19 on purpose — the type-level tests are pinned
+      # to the v19 types and vitest does not typecheck; this matrix exercises
+      # runtimes only.
+      - name: Install peer combo (react ${{ matrix.react }}, vite ${{ matrix.vite }})
+        run: pnpm --filter @hueest/xray add -D react@${{ matrix.react }} react-dom@${{ matrix.react }} vite@${{ matrix.vite }}
+
+      - name: Test
+        run: pnpm --filter @hueest/xray test
+
+      - name: Build
+        run: pnpm --filter @hueest/xray build

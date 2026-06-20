@@ -1,0 +1,106 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`node-side pipeline over a real dogfood capture (golden) > projects the dogfood product-page plate deterministically 1`] = `
+{
+  "css": "[data-xr-root] .xr-product-page-0 { box-sizing: border-box }
+[data-xr-root] .xr-product-page-1 { margin-top: 0px; margin-right: 0px; margin-bottom: 0px; margin-left: 0px }
+[data-xr-root] .xr-product-page-2 { display: flex }
+[data-xr-root] .xr-product-page-3 { display: grid }
+[data-xr-root] .xr-product-page-4 { line-height: 17.3px }
+[data-xr-root] .xr-product-page-5 { display: inline-block; vertical-align: middle }
+[data-xr-root] .xr-product-page-6 { line-height: 24.6px }
+[data-xr-root] .xr-product-page-7 { line-height: 28.8px }
+[data-xr-root] .xr-product-page-8 { line-height: 21.6px }
+[data-xr-root] .xr-product-page-9 { display: inline-block; vertical-align: middle; container-type: inline-size; container-name: xr-t14; width: 391.6px; max-width: 100% }
+[data-xr-root] .xr-product-page-a { display: block; width: 100% }
+[data-xr-root] .xr-product-page-b { line-height: 25.2px }
+[data-xr-root] .xr-product-page-c { line-height: 20.4px }
+[data-xr-root] .xr-product-page-d { line-height: 19.2px }
+[data-xr-root] .xr-product-page-e { width: 100%; container-type: inline-size; display: flex; flex-direction: column; row-gap: 1.4rem; column-gap: 1.4rem; padding-top: 1.5rem; padding-right: 1.6rem; padding-bottom: 1.5rem; padding-left: 1.6rem; border-top-style: solid; border-top-width: 1px; border-right-style: solid; border-right-width: 1px; border-bottom-style: solid; border-bottom-width: 1px; border-left-style: solid; border-left-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-right-radius: 8px; border-bottom-left-radius: 8px }
+[data-xr-root] .xr-product-page-f { display: grid; grid-template-columns: 1fr; row-gap: 1.4rem; column-gap: 1.4rem }
+[data-xr-root] .xr-product-page-g { aspect-ratio: 16 / 9; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-right-radius: 8px; border-bottom-left-radius: 8px; border-top-style: solid; border-top-width: 1px; border-right-style: solid; border-right-width: 1px; border-bottom-style: solid; border-bottom-width: 1px; border-left-style: solid; border-left-width: 1px }
+[data-xr-root] .xr-product-page-h { display: flex; flex-direction: column; align-items: flex-start; row-gap: 0.55rem; column-gap: 0.55rem; min-width: 0px }
+[data-xr-root] .xr-product-page-i { margin-top: 0px; margin-right: 0px; margin-bottom: 0px; margin-left: 0px }
+[data-xr-root] .xr-product-page-j { margin-top: 0.35rem; border-top-width: 0px; border-right-width: 0px; border-bottom-width: 0px; border-left-width: 0px; border-top-style: none; border-right-style: none; border-bottom-style: none; border-left-style: none; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-right-radius: 3px; border-bottom-left-radius: 3px; padding-top: 0.55rem; padding-right: 1.3rem; padding-bottom: 0.55rem; padding-left: 1.3rem }
+[data-xr-root] .xr-product-page-k { padding-top: 1.3rem; border-top-width: 1px; border-top-style: solid }
+[data-xr-root] .xr-product-page-l { margin-top: 0px; margin-right: 0px; margin-bottom: 0.9rem; margin-left: 0px }
+[data-xr-root] .xr-product-page-m { margin-top: 0px; margin-right: 0px; margin-bottom: 0px; margin-left: 0px; padding-top: 0px; padding-right: 0px; padding-bottom: 0px; padding-left: 0px; display: flex; row-gap: 0.9rem; column-gap: 0.9rem; overflow-x: hidden; overflow-y: hidden }
+[data-xr-root] .xr-product-page-n { flex-grow: 0; flex-shrink: 0; flex-basis: 8.5rem; display: flex; flex-direction: column; row-gap: 0.45rem; column-gap: 0.45rem }
+[data-xr-root] .xr-product-page-o { aspect-ratio: 4 / 3; border-top-left-radius: 3px; border-top-right-radius: 3px; border-bottom-right-radius: 3px; border-bottom-left-radius: 3px; border-top-style: solid; border-top-width: 1px; border-right-style: solid; border-right-width: 1px; border-bottom-style: solid; border-bottom-width: 1px; border-left-style: solid; border-left-width: 1px }
+@container (min-width: 28rem) { [data-xr-root] .xr-product-page-p { grid-template-columns: minmax(0px, 0.85fr) minmax(0px, 1fr) } }
+@container (min-width: 28rem) { [data-xr-root] .xr-product-page-q { aspect-ratio: 1 / 1 } }
+[data-xr-root] .xr-product-page-r { height: calc(16 * 21.6px) }
+@container xr-t14 (min-width: 52px) { [data-xr-root] .xr-product-page-s { height: calc(15 * 21.6px) } }
+@container xr-t14 (min-width: 55px) { [data-xr-root] .xr-product-page-t { height: calc(14 * 21.6px) } }
+[data-xr-root] .xr-product-page-u { box-sizing: border-box; width: 332.8px; height: 332.8px }
+@container xr-t14 (min-width: 59px) { [data-xr-root] .xr-product-page-v { height: calc(13 * 21.6px) } }
+@container xr-t14 (min-width: 67px) { [data-xr-root] .xr-product-page-w { height: calc(12 * 21.6px) } }
+@container xr-t14 (min-width: 70px) { [data-xr-root] .xr-product-page-x { height: calc(11 * 21.6px) } }
+@container xr-t14 (min-width: 73px) { [data-xr-root] .xr-product-page-y { height: calc(10 * 21.6px) } }
+[data-xr-root] .xr-product-page-z { width: 154.8px; height: 15px }
+@container xr-t14 (min-width: 81px) { [data-xr-root] .xr-product-page-10 { height: calc(9 * 21.6px) } }
+@container xr-t14 (min-width: 92px) { [data-xr-root] .xr-product-page-11 { height: calc(8 * 21.6px) } }
+@container xr-t14 (min-width: 99px) { [data-xr-root] .xr-product-page-12 { height: calc(7 * 21.6px) } }
+[data-xr-root] .xr-product-page-13 { width: 250.3px; height: 24.6px }
+@container xr-t14 (min-width: 128px) { [data-xr-root] .xr-product-page-14 { height: calc(6 * 21.6px) } }
+@container xr-t14 (min-width: 142px) { [data-xr-root] .xr-product-page-15 { height: calc(5 * 21.6px) } }
+@container xr-t14 (min-width: 180px) { [data-xr-root] .xr-product-page-16 { height: calc(4 * 21.6px) } }
+[data-xr-root] .xr-product-page-17 { width: 63.9px; height: 22px }
+@container xr-t14 (min-width: 205px) { [data-xr-root] .xr-product-page-18 { height: calc(3 * 21.6px) } }
+@container xr-t14 (min-width: 330px) { [data-xr-root] .xr-product-page-19 { height: calc(2 * 21.6px) } }
+@container xr-t14 (min-width: 594px) { [data-xr-root] .xr-product-page-1a { height: calc(1 * 21.6px) } }
+[data-xr-root] .xr-product-page-1b { width: 160.5px; height: 17px }
+[data-xr-root] .xr-product-page-1c { box-sizing: border-box; width: 126px; height: 41.6px }
+[data-xr-root] .xr-product-page-1d { width: 152.5px; height: 21px }
+[data-xr-root] .xr-product-page-1e { box-sizing: border-box; width: 136px; height: 102px }
+[data-xr-root] .xr-product-page-1f { width: 61.7px; height: 16px }
+[data-xr-root] .xr-product-page-1g { width: 32.4px; height: 15px }
+[data-xr-root] .xr-product-page-1h { width: 90px; height: 16px }
+[data-xr-root] .xr-product-page-1i { width: 40.6px; height: 15px }
+[data-xr-root] .xr-product-page-1j { width: 88.4px; height: 16px }
+[data-xr-root] .xr-product-page-1k { width: 31.7px; height: 15px }
+[data-xr-root] .xr-product-page-1l { width: 77.4px; height: 16px }
+[data-xr-root] .xr-product-page-1m { width: 39.9px; height: 15px }",
+  "plate": {
+    "chunks": [
+      "<div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-e"><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-3 xr-product-page-f xr-product-page-p"><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-g xr-product-page-q xr-product-page-u"></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-h"><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-4"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-z"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-6 xr-product-page-i"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-13"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-7"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-17"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-8"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1b"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-8 xr-product-page-i"><div class="xr-node xr-product-page-9"><div class="xr-node xr-leaf xr-leaf-text-block xr-product-page-a xr-product-page-r xr-product-page-s xr-product-page-t xr-product-page-v xr-product-page-w xr-product-page-x xr-product-page-y xr-product-page-10 xr-product-page-11 xr-product-page-12 xr-product-page-14 xr-product-page-15 xr-product-page-16 xr-product-page-18 xr-product-page-19 xr-product-page-1a"></div></div></div><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-j xr-product-page-1c"></div></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-k"><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-b xr-product-page-l"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1d"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-m"><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-n"><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-o xr-product-page-1e"></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-c"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1f"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-d"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1g"></div></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-n"><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-o xr-product-page-1e"></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-c"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1h"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-d"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1i"></div></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-n"><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-o xr-product-page-1e"></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-c"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1j"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-d"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1k"></div></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-2 xr-product-page-n"><div class="xr-node xr-leaf xr-leaf-box xr-product-page-0 xr-product-page-1 xr-product-page-o xr-product-page-1e"></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-c"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1l"></div></div><div class="xr-node xr-product-page-0 xr-product-page-1 xr-product-page-d"><div class="xr-node xr-leaf xr-leaf-text-line xr-product-page-5 xr-product-page-1m"></div></div></div></div></div></div>",
+    ],
+    "name": "product-page",
+    "v": 1,
+  },
+}
+`;
+
+exports[`node-side plate pipeline (golden) > projects a 2-view PlateIR deterministically 1`] = `
+{
+  "css": "[data-xr-root] .xr-golden-0 { display: contents }
+[data-xr-root] .xr-golden-1 { display: flex; gap: 8px }
+[data-xr-root] .xr-golden-2 { width: 48px; height: 48px; border-radius: 9999px }
+[data-xr-root] .xr-golden-3 { width: 320px; height: 48px }
+[data-xr-root] .xr-golden-4 { width: 120px; height: 16px }
+[data-xr-root] .xr-golden-5 { width: 80px; height: 80px }
+@media (min-width: 768px) { [data-xr-root] .xr-golden-6 { display: none !important } }
+@media (max-width: 767.98px) { [data-xr-root] .xr-golden-7 { display: none !important } }",
+  "plate": {
+    "chunks": [
+      {
+        "c": "xr-node xr-golden-0 xr-golden-6",
+        "k": [
+          {
+            "c": "xr-node xr-golden-1",
+            "k": [
+              "<div class="xr-node xr-leaf xr-leaf-media xr-golden-2"></div><div class="xr-node xr-leaf xr-leaf-text-line xr-golden-4"></div>",
+              {
+                "r": "avatar",
+              },
+            ],
+          },
+        ],
+      },
+      "<div class="xr-node xr-golden-0 xr-golden-7"><div class="xr-node xr-golden-1"><div class="xr-node xr-leaf xr-leaf-text-block xr-golden-3"></div><div class="xr-node xr-leaf xr-leaf-box xr-golden-5"></div></div></div>",
+    ],
+    "name": "golden",
+    "v": 1,
+  },
+}
+`;

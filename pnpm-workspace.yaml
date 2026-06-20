@@ -1,0 +1,12 @@
+saveExact: true
+packages:
+  - 'packages/*' # published to npm (@hueest/xray)
+  - 'apps/*' # deployed, never published (website, extension)
+  - 'libs/*' # internal shared, workspace: only — must be bundled into any published package that uses them
+allowBuilds:
+  esbuild: true
+  sharp: true
+  spawn-sync: true
+  workerd: true
+patchedDependencies:
+  '@astrojs/starlight@0.41.3': patches/@astrojs__starlight@0.41.3.patch

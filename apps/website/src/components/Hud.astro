@@ -1,0 +1,249 @@
+---
+/* An illustration of the plugin's HUD (the real one lives in packages/xray/src/hud.ts),
+   re-skinned into the Reading Room palette inside a stylized browser frame — not a shot. */
+const plates = [
+  {
+    name: 'profile-card',
+    bands: [
+      { label: '[0,768)', on: true },
+      { label: '[768,∞)', on: true },
+    ],
+  },
+  {
+    name: 'news-feed',
+    bands: [
+      { label: '[0,768)', on: true },
+      { label: '[768,∞)', on: false },
+    ],
+  },
+  { name: 'catalog', bands: [{ label: '[0,∞)', on: true }] },
+]
+---
+
+<div class="browser" aria-hidden="true">
+  <div class="browser-bar">
+    <span class="browser-dots"><i></i><i></i><i></i></span>
+    <span class="browser-url">localhost:5173</span>
+  </div>
+  <div class="browser-view">
+    <div class="browser-page">
+      <div class="ph ph--head"></div>
+      <div class="ph ph--row"></div>
+      <div class="ph ph--row ph--short"></div>
+      <div class="ph-cards"><span></span><span></span></div>
+    </div>
+
+    <div class="hud">
+      <div class="hud-title">xray — 3 plates</div>
+      <label class="hud-toggle"><span class="hud-box hud-box--on"></span>Capture</label>
+      <label class="hud-toggle"><span class="hud-box"></span>Light Box</label>
+      <button class="hud-action" type="button" tabindex="-1">Capture all views</button>
+      {
+        plates.map((p) => (
+          <div class="hud-plate">
+            <span class="hud-name">{p.name}</span>
+            <span class="hud-bands">
+              {p.bands.map((b) => (
+                <span class:list={['hud-band', b.on ? 'on' : 'off']}>{b.label}</span>
+              ))}
+            </span>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</div>
+
+<style>
+  .browser {
+    width: 100%;
+    margin: 1.25rem 0 0;
+    border: 1px solid var(--xrw-line);
+    border-radius: var(--xrw-radius-md);
+    overflow: hidden;
+    background: var(--xrw-surface);
+    box-shadow: var(--xrw-glow-box-out), var(--xrw-glow-box-in);
+  }
+
+  .browser-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--xrw-surface-2);
+    border-bottom: 1px solid var(--xrw-line);
+  }
+  .browser-dots {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: none;
+    & i {
+      display: block;
+      margin: 0;
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+      background: var(--xrw-line);
+    }
+  }
+  .browser-url {
+    flex: 1;
+    min-width: 0;
+    padding: 0.15rem 0.6rem;
+    border-radius: var(--xrw-radius-full);
+    background: var(--xrw-bg);
+    font-family: var(--xrw-font-mono);
+    font-size: 0.7rem;
+    color: var(--xrw-muted);
+  }
+
+  .browser-view {
+    aspect-ratio: 4 / 3;
+    background: var(--xrw-bg);
+    margin: 0;
+    overflow: hidden;
+    padding: 1.1rem 1.25rem;
+    position: relative;
+  }
+  /* Squarer on mobile; widescreen once there's room, like a real window. */
+  @media (min-width: 50rem) {
+    .browser-view {
+      aspect-ratio: 16 / 9;
+    }
+  }
+
+  .browser-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    opacity: 0.5;
+  }
+  .ph {
+    height: 0.7rem;
+    border-radius: var(--xrw-radius-sm);
+    background: var(--xrw-surface-2);
+  }
+  .ph--head {
+    width: 40%;
+    height: 1.1rem;
+  }
+  .ph--row {
+    width: 75%;
+  }
+  .ph--short {
+    width: 55%;
+  }
+  .ph-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin-top: 0.4rem;
+    & span {
+      height: 3.5rem;
+      border-radius: var(--xrw-radius-md);
+      border: 1px solid var(--xrw-line);
+      background: var(--xrw-surface);
+    }
+  }
+
+  .hud {
+    position: absolute;
+    right: 0.9rem;
+    bottom: 0.9rem;
+    transform: scale(0.82);
+    transform-origin: bottom right;
+    width: 16rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--xrw-surface);
+    border: 1px solid var(--xrw-line);
+    border-radius: var(--xrw-radius-md);
+    box-shadow:
+      var(--xrw-glow-box-out),
+      0 8px 24px -8px var(--xrw-vignette);
+    font-family: var(--xrw-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--xrw-ink);
+  }
+  .hud-title {
+    font-weight: 700;
+    color: var(--xrw-muted);
+    margin-bottom: 0.25rem;
+  }
+  .hud-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .hud-box {
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 1px solid var(--xrw-line);
+    border-radius: var(--xrw-radius-sm);
+  }
+  .hud-box--on {
+    position: relative;
+    background: var(--xrw-accent);
+    border-color: var(--xrw-accent);
+  }
+  .hud-box--on::after {
+    content: '✓';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 0.55rem;
+    color: var(--xrw-bg);
+  }
+  .hud-action {
+    display: block;
+    width: 100%;
+    margin: 0.5rem 0 0.35rem;
+    padding: 0.3rem 0.5rem;
+    border: 0;
+    border-radius: var(--xrw-radius-sm);
+    background: var(--xrw-accent);
+    color: var(--xrw-bg);
+    font: inherit;
+    font-weight: 700;
+    text-align: center;
+  }
+  .hud-plate {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .hud-name {
+    color: var(--xrw-ink);
+  }
+  /* Coverage state reads as shape + colour, never colour alone (the product's own
+     rule): a filled dot = captured, a hollow dot = missing. */
+  .hud-band {
+    margin-left: 0.35rem;
+    &::before {
+      content: '';
+      display: inline-block;
+      width: 0.45rem;
+      height: 0.45rem;
+      margin-right: 0.3rem;
+      border: 1px solid currentColor;
+      border-radius: var(--xrw-radius-full);
+      vertical-align: middle;
+    }
+    &.on {
+      color: var(--xrw-accent);
+      &::before {
+        background: currentColor;
+      }
+    }
+    &.off {
+      color: var(--xrw-muted);
+      opacity: 0.7;
+      &::before {
+        background: transparent;
+      }
+    }
+  }
+</style>

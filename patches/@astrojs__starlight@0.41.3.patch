@@ -1,0 +1,14 @@
+diff --git a/components/MobileMenuToggle.astro b/components/MobileMenuToggle.astro
+--- a/components/MobileMenuToggle.astro
++++ b/components/MobileMenuToggle.astro
+@@ -34,7 +34,9 @@ import Icon from '../user-components/Icon.astro';
+ 		}
+ 
+ 		setExpanded(expanded: boolean) {
+-			this.setAttribute('aria-expanded', String(expanded));
++			const value = String(expanded);
++			this.setAttribute('aria-expanded', value);
++			this.btn.setAttribute('aria-expanded', value);
+ 			document.body.toggleAttribute('data-mobile-menu-expanded', expanded);
+ 			// Trap keyboard focus inside the header and menu when the menu is expanded.
+ 			document.querySelectorAll<HTMLElement>('.main-frame, .sl-skip-link').forEach((el) => {

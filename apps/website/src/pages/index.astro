@@ -1,0 +1,480 @@
+---
+/* The homepage: a full Astro page (not MDX) so it can host the Get-started block
+   (Steps → Tabs → diff'd Code) and its own scoped styles. Renders via <StarlightPage>. */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { CardGrid, LinkCard, Steps, Tabs, TabItem, Code } from '@astrojs/starlight/components'
+import Hud from '../components/Hud.astro'
+
+const tagline = `Browse your dev server and xray captures each component's skeleton from
+the DOM it actually rendered. Your structure, your own CSS, committed to git.
+It reflows at every width and never rots into a stale placeholder.`
+
+const viteConfig = `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { xrayVitePlugin } from '@hueest/xray'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    xrayVitePlugin({ hud: true }),
+  ],
+})`
+
+const tsConfig = `{
+  "compilerOptions": {
+    "types": ["@hueest/xray/virtual"]
+  }
+}`
+
+// The product-details page integrated four ways; the diff (meta) shows xray replacing
+// each pattern's loading handling.
+const wrapTabs = [
+  {
+    label: 'Plain fetch',
+    meta: 'ins={1,2,23,24,25} del={20,21,22}',
+    code: `import { Skeleton } from '@hueest/xray/react'
+import plate from 'virtual:xray/plates/similar-products'
+import { useState, useEffect } from 'react'
+import { ProductHero } from './ProductHero'
+import { SimilarProductsCarousel } from './SimilarProductsCarousel'
+
+export function ProductDetails({ product }) {
+  const [similar, setSimilar] = useState(null)
+
+  useEffect(() => {
+    fetchSimilar(product.id).then(setSimilar)
+  }, [product.id])
+
+  return (
+    <main className="product-details">
+      <ProductHero product={product} />
+
+      <section aria-labelledby="similar">
+        <h2 id="similar">You might also like</h2>
+        {similar
+          ? <SimilarProductsCarousel products={similar} />
+          : <div>Loading...</div>}
+        <Skeleton plate={plate} loading={!similar}>
+          {similar && <SimilarProductsCarousel products={similar} />}
+        </Skeleton>
+      </section>
+    </main>
+  )
+}`,
+  },
+  {
+    label: 'TanStack Query',
+    meta: 'ins={1,2,22,23,24} del={19,20,21}',
+    code: `import { Skeleton } from '@hueest/xray/react'
+import plate from 'virtual:xray/plates/similar-products'
+import { useQuery } from '@tanstack/react-query'
+import { ProductHero } from './ProductHero'
+import { SimilarProductsCarousel } from './SimilarProductsCarousel'
+
+export function ProductDetails({ product }) {
+  const { data: similar, isLoading } = useQuery({
+    queryKey: ['similar', product.id],
+    queryFn: () => fetchSimilar(product.id),
+  })
+
+  return (
+    <main className="product-details">
+      <ProductHero product={product} />
+
+      <section aria-labelledby="similar">
+        <h2 id="similar">You might also like</h2>
+        {isLoading
+          ? <div>Loading...</div>
+          : <SimilarProductsCarousel products={similar} />}
+        <Skeleton plate={plate} loading={isLoading}>
+          {!isLoading && <SimilarProductsCarousel products={similar} />}
+        </Skeleton>
+      </section>
+    </main>
+  )
+}`,
+  },
+  {
+    label: 'React use()',
+    meta: 'ins={1,2,15,18} del={14,17}',
+    code: `import { Skeleton } from '@hueest/xray/react'
+import plate from 'virtual:xray/plates/similar-products'
+import { Suspense, use } from 'react'
+import { ProductHero } from './ProductHero'
+import { SimilarProductsCarousel } from './SimilarProductsCarousel'
+
+export function ProductDetails({ product, similar }) {
+  return (
+    <main className="product-details">
+      <ProductHero product={product} />
+
+      <section aria-labelledby="similar">
+        <h2 id="similar">You might also like</h2>
+        <Suspense fallback={<div>Loading...</div>}>
+        <Skeleton plate={plate} suspense>
+          <SimilarProductsCarousel products={use(similar)} />
+        </Suspense>
+        </Skeleton>
+      </section>
+    </main>
+  )
+}`,
+  },
+  {
+    label: 'Server Components',
+    meta: 'ins={1,2,17,20} del={16,19}',
+    code: `import { Skeleton } from '@hueest/xray/react'
+import plate from 'virtual:xray/plates/similar-products'
+import { Suspense } from 'react'
+import { ProductHero } from './ProductHero'
+import { SimilarProductsCarousel } from './SimilarProductsCarousel'
+
+export default async function ProductDetails({ params }) {
+  const product = await getProduct(params.id)
+
+  return (
+    <main className="product-details">
+      <ProductHero product={product} />
+
+      <section aria-labelledby="similar">
+        <h2 id="similar">You might also like</h2>
+        <Suspense fallback={<div>Loading...</div>}>
+        <Skeleton plate={plate} suspense>
+          <SimilarProductsCarousel productId={product.id} />
+        </Suspense>
+        </Skeleton>
+      </section>
+    </main>
+  )
+}`,
+  },
+]
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'xray',
+    description:
+      'Auto-captured skeleton loading screens for Vite. Capture the structure, ship the plate.',
+    template: 'splash',
+    hero: { tagline },
+  }}
+>
+  <h2>Get started</h2>
+
+  <Steps>
+    <ol>
+      <li>
+        <strong>Install.</strong>
+        <Code lang="sh" code="pnpm add @hueest/xray" />
+      </li>
+      <li>
+        <strong>Add the plugin</strong> to your Vite config, and register the virtual-module types.
+        <Code lang="ts" meta='title="vite.config.ts" ins={3,8}' code={viteConfig} />
+        <Code lang="jsonc" meta='title="tsconfig.json" ins={3}' code={tsConfig} />
+      </li>
+      <li>
+        <strong>Wrap what loads</strong> in <code>&lt;Skeleton&gt;</code>. It slots into whatever
+        you fetch with: pass the Plate and a <code>loading</code> boolean, or <code>suspense</code> for
+        anything that suspends.
+        <Tabs>
+          {
+            wrapTabs.map((tab) => (
+              <TabItem label={tab.label}>
+                <Code lang="tsx" code={tab.code} meta={tab.meta} />
+              </TabItem>
+            ))
+          }
+        </Tabs>
+      </li>
+      <li>
+        <strong>Browse your dev server.</strong> Capture starts off: tick <strong>Capture</strong> in
+        the HUD (or pass <code>capture: true</code>) and, when the component renders for real, xray
+        captures its Plate into <code>plates/</code>. The HUD tracks Coverage across every width
+        band; commit the Plate and you are shipping faithful skeletons.
+        <Hud />
+      </li>
+    </ol>
+  </Steps>
+
+  <h2>The skeleton <em>is</em> your component</h2>
+
+  <p>
+    A skeleton is the cheapest wait you can give a user: it shows the shape of what's coming and
+    holds the layout. Building one is the miserable part. You hand-make a second copy of a component
+    you already wrote, guess the sizes, and match the styles by eye. It's stale the day you ship:
+    the component changes, the skeleton doesn't, and no test catches the drift.
+  </p>
+
+  <p>
+    <a href="https://github.com/0xGF">@0xGF</a> pioneered the fix with
+    <a href="https://github.com/0xGF/boneyard">boneyard</a>: generate the skeleton from the real
+    component, so it starts out faithful. xray is a from-scratch take that pushes it further. It
+    keeps your real structure and CSS, so the skeleton reflows with the component at every width. It
+    captures inside the dev server you already run, as you browse: no CLI, no headless browser, no
+    second copy to maintain. The skeleton you ship is the component you wrote, stripped of its
+    flesh.
+  </p>
+
+  <h3 class="flow-heading">The insides</h3>
+
+  <dl class="flow">
+    <div class="flow-row">
+      <dt class="flow-term">Wire</dt>
+      <dd class="flow-def">
+        With xray running in your Vite dev server and a Plate passed to
+        <code>&lt;Skeleton&gt;</code>, the pieces are connected: the Plate ties a capture to its
+        component, and its <code>loading</code> (or <code>suspense</code>) prop marks when the
+        content is still pending. xray already knows what to capture, who it belongs to, and when.
+      </dd>
+    </div>
+    <div class="flow-row">
+      <dt class="flow-term">Capture</dt>
+      <dd class="flow-def">
+        The first time that component renders in dev, xray walks the DOM it produced and copies the
+        author CSS that styles it, <code>@media</code> rules and all. It keeps the rules rather than frozen
+        pixels, which is what lets the skeleton reflow later.
+      </dd>
+    </div>
+    <div class="flow-row">
+      <dt class="flow-term">Store</dt>
+      <dd class="flow-def">
+        The result is written to its <em>Plate</em>: a small, self-contained JSON file you commit
+        beside the component. A resize captures another View into the same Plate, and any drift
+        shows up as a diff in review, never a silent lie in production.
+      </dd>
+    </div>
+    <div class="flow-row">
+      <dt class="flow-term">Bake</dt>
+      <dd class="flow-def">
+        When the virtual module resolves, xray bakes the Plate into ready-to-paint HTML and CSS.
+        Production ships markup and a stylesheet, never a capture engine.
+      </dd>
+    </div>
+    <div class="flow-row">
+      <dt class="flow-term">Render</dt>
+      <dd class="flow-def">
+        While data loads, <code>&lt;Skeleton&gt;</code> paints that HTML and CSS. Every box lands exactly
+        where the real content will, and the bones reflow like the component until it takes over.
+      </dd>
+    </div>
+  </dl>
+
+  <h2>Features</h2>
+
+  <ul class="feature-index">
+    <li>
+      <h3>Zero layout shift</h3>
+      <p>
+        A skeleton reserves the exact box its content will fill. Nested skeletons (Stitches) resolve
+        in any order without reflowing the page, and each one captures and updates independently.
+      </p>
+      <p class="feature-link"><a href="/guides/nested-skeletons/">Nested skeletons →</a></p>
+    </li>
+    <li>
+      <h3>Flash prevention</h3>
+      <p>
+        A 250ms grace delay keeps fast loads skeleton-free; a 600ms minimum keeps a shown skeleton
+        from blinking away. Three CSS tokens, tunable globally or per plate.
+      </p>
+      <p class="feature-link"><a href="/guides/display-timing/">Display timing →</a></p>
+    </li>
+    <li>
+      <h3>Breakpoint detection</h3>
+      <p>
+        Views are captured per width band, derived from the component's own <code>@media</code>
+        rules and <code>matchMedia</code> calls. The browser selects the active View with plain CSS: no
+        runtime width measurement, SSR-safe.
+      </p>
+      <p class="feature-link"><a href="/guides/responsive-views/">Responsive & Views →</a></p>
+    </li>
+    <li>
+      <h3>In-session capture</h3>
+      <p>
+        Capture runs in the browser tab you develop in: authenticated, real data, no headless
+        browser. The HUD shows per-Plate Coverage; Light Box forces every mounted skeleton on for
+        inspection.
+      </p>
+      <p class="feature-link"><a href="/guides/hud-light-box/">The HUD & Light Box →</a></p>
+    </li>
+    <li>
+      <h3>Automated width sweep</h3>
+      <p>
+        The companion extension drives the viewport through every derived breakpoint and captures
+        each View in one pass, preserving interaction state between widths.
+      </p>
+      <p class="feature-link"><a href="/guides/capture-all/">Capture all views →</a></p>
+    </li>
+    <li>
+      <h3>CSS-based config</h3>
+      <p>
+        Tokens cascade from <code>:root</code>, per plate, per bone kind, or per instance, with
+        <code>light-dark()</code> for themes. No props, no JS config.
+      </p>
+      <p class="feature-link"><a href="/guides/theming/">Theming →</a></p>
+    </li>
+    <li>
+      <h3>Custom bones</h3>
+      <p>
+        <code>data-xr-ignore</code> drops decoration, <code>data-xr-bone-kind</code> collapses a widget
+        to a single bone, and a programmable walker applies project-wide rules.
+      </p>
+      <p class="feature-link">
+        <a href="/guides/capture-customization/">Capture customization →</a>
+      </p>
+    </li>
+    <li>
+      <h3>Data fixtures</h3>
+      <p>
+        Record a component's render input once; replay it so every re-capture renders the same
+        state. A dev-only sidecar committed next to the Plate.
+      </p>
+      <p class="feature-link"><a href="/guides/fixtures/">Fixtures →</a></p>
+    </li>
+  </ul>
+
+  <h2>Go deeper</h2>
+
+  <CardGrid>
+    <LinkCard title="Guides" href="/guides/responsive-views/" />
+    <LinkCard title="API reference" href="/reference/api/xray/functions/xrayviteplugin/" />
+  </CardGrid>
+</StarlightPage>
+
+<style>
+  :global(.expressive-code button[data-code]) {
+    display: none;
+  }
+
+  .feature-index {
+    list-style: none;
+    margin: var(--xrw-space-md) 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--xrw-block);
+
+    @media (min-width: 32rem) {
+      & {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    & li {
+      border-top: 1px solid var(--xrw-line);
+      margin: 0;
+      padding-top: var(--xrw-space-sm);
+    }
+
+    & h3 {
+      margin: 0 0 var(--xrw-space-xs);
+      font-family: var(--xrw-font-display);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      font-size: var(--xrw-text-lg);
+      line-height: 1.2;
+      color: var(--xrw-bone);
+    }
+
+    & p {
+      margin: 0;
+      font-size: var(--xrw-text-base);
+      line-height: 1.5;
+      color: var(--sl-color-gray-3);
+      text-wrap: pretty;
+    }
+
+    & .feature-link {
+      margin-top: var(--xrw-space-xs);
+      font-size: var(--xrw-text-sm);
+
+      & a {
+        color: var(--sl-color-accent-high);
+        text-decoration: none;
+
+        &:hover,
+        &:focus-visible {
+          text-decoration: underline;
+          text-underline-offset: 0.2em;
+        }
+      }
+    }
+  }
+
+  .flow-heading {
+    margin: var(--xrw-section) 0 0;
+    font-family: var(--xrw-font-display);
+    font-weight: 700;
+    font-size: var(--xrw-text-2xl);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    color: var(--xrw-bone);
+  }
+  .flow {
+    margin: var(--xrw-space-md) 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--xrw-block);
+  }
+  .flow-row {
+    position: relative;
+    padding-left: var(--xrw-space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--xrw-space-xs);
+
+    /* The spine is a small left rail inside the content (never a gutter that can fall
+       off-screen); ::before reaches down to the next node, ::after is the node dot. */
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0.4375rem;
+      top: 0.85rem;
+      bottom: calc(-1 * var(--xrw-block) - 0.85rem);
+      width: 1px;
+      background: var(--xrw-line);
+    }
+
+    &:last-child::before {
+      display: none;
+    }
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.4rem;
+      width: 0.9rem;
+      height: 0.9rem;
+      border-radius: var(--xrw-radius-full);
+      border: 1px solid var(--xrw-accent);
+      background: var(--xrw-bg);
+    }
+  }
+  .flow-term {
+    margin: 0;
+    font-family: var(--xrw-font-display);
+    font-weight: 700;
+    font-size: var(--xrw-text-xl);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    color: var(--xrw-bone);
+  }
+  .flow-def {
+    margin: 0;
+    max-width: 74ch;
+    font-size: var(--xrw-text-md);
+    line-height: 1.6;
+    color: var(--sl-color-gray-2);
+    text-wrap: pretty;
+
+    & em {
+      font-style: normal;
+      color: var(--xrw-bone);
+    }
+
+    & code {
+      font-size: 0.9em;
+    }
+  }
+</style>

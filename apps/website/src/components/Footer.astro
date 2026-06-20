@@ -1,0 +1,122 @@
+---
+import EditLink from '@astrojs/starlight/components/EditLink.astro'
+import LastUpdated from '@astrojs/starlight/components/LastUpdated.astro'
+import Pagination from '@astrojs/starlight/components/Pagination.astro'
+import config from 'virtual:starlight/user-config'
+import { Icon } from '@astrojs/starlight/components'
+import { GITHUB } from '../lib/site.ts'
+
+const isHome = Astro.url.pathname === '/'
+---
+
+{
+  isHome ? (
+    <footer class="site-footer">
+      <span>
+        <a href={`${GITHUB}/blob/main/LICENSE`}>MIT License</a> · by
+        <a class="site-footer__hueest" href="https://hueest.com">
+          Hueest
+        </a>
+      </span>
+      <a href={GITHUB}>GitHub</a>
+    </footer>
+  ) : (
+    <footer class="starlight-footer sl-flex">
+      <div class="meta sl-flex">
+        <EditLink />
+        <LastUpdated />
+      </div>
+      <Pagination />
+
+      {config.credits && (
+        <a class="kudos sl-flex" href="https://starlight.astro.build">
+          <Icon name="starlight" /> {Astro.locals.t('builtWithStarlight.label')}
+        </a>
+      )}
+    </footer>
+  )
+}
+
+<style>
+  @layer starlight.core {
+    .starlight-footer {
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .meta {
+      gap: 0.75rem 3rem;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: 3rem;
+      font-size: var(--sl-text-sm);
+      color: var(--sl-color-gray-3);
+    }
+    .meta > :global(p:only-child) {
+      margin-inline-start: auto;
+    }
+
+    .kudos {
+      align-items: center;
+      gap: 0.5em;
+      margin: 1.5rem auto;
+      font-size: var(--sl-text-xs);
+      text-decoration: none;
+      color: var(--sl-color-gray-3);
+    }
+    .kudos:hover {
+      color: var(--sl-color-white);
+    }
+  }
+
+  @layer starlight.components {
+    .kudos :global(svg) {
+      color: var(--sl-color-orange);
+    }
+  }
+
+  .site-footer {
+    width: 100vw;
+    margin-inline: calc(50% - 50vw);
+    margin-top: var(--xrw-section);
+    padding: var(--xrw-space-lg) max(var(--xrw-space-lg), calc(50vw - 25rem));
+    border-top: 1px solid var(--xrw-line);
+    background: color-mix(in oklab, var(--xrw-bg), black 35%);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--xrw-space-xs) var(--xrw-space-lg);
+    font-size: var(--xrw-text-xs);
+    color: var(--xrw-muted);
+
+    & a {
+      display: inline-block;
+      padding-block: var(--xrw-space-2xs);
+      color: var(--sl-color-gray-2);
+      text-decoration: none;
+      transition:
+        color var(--xrw-dur-state) var(--xrw-ease),
+        text-shadow var(--xrw-dur-state) var(--xrw-ease);
+
+      &:hover {
+        color: var(--xrw-accent);
+      }
+    }
+
+    & .site-footer__hueest {
+      color: var(--xrw-crimson);
+      text-shadow: 0 0 14px color-mix(in oklab, var(--xrw-crimson), transparent 68%);
+
+      &:hover {
+        color: var(--xrw-crimson);
+        text-shadow: 0 0 18px color-mix(in oklab, var(--xrw-crimson), transparent 50%);
+      }
+    }
+
+    @media (pointer: coarse) {
+      & a {
+        padding-block: var(--xrw-space-sm);
+      }
+    }
+  }
+</style>
