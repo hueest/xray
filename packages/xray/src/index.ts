@@ -45,11 +45,14 @@ export interface XrayOptions {
    * `plates`.
    */
   platesDir?: string
-  /** Mount the dev HUD for coverage, Capture, Light Box, and capture-all controls. Default: `false`. */
+  /**
+   * Mount the dev HUD: record and Light Box controls, per-plate Coverage, per-plate keys. Default:
+   * `false`.
+   */
   hud?: boolean
   /**
-   * Initial state of the browse-time Capture toggle in dev. Keep this off for normal browsing and
-   * let the HUD, capture-all flow, or `?xray-capture` turn Capture on per tab. Default: `false`.
+   * Whether recording is engaged at boot in dev. Keep this off for normal browsing and let the HUD
+   * (or `?xray-capture`) engage recording per tab. Default: `false`.
    */
   capture?: boolean
   /**
@@ -597,9 +600,10 @@ function announcePlate(ws: PlateBroadcaster, name: string, stored: StoredPlate |
 }
 
 /**
- * Per-plate breakpoints + derived coverage bands, read from the committed StoredPlate files. The
- * `spans` derive from each plate's `breakpoints` (ADR 0022: a StoredPlate sweeps all widths in one
- * session, so its coverage is complete).
+ * Per-plate breakpoints + captured coverage bands, read from the committed StoredPlate files.
+ * `spans` come from the plate itself (ADR 0029: the bands actually captured); a legacy plate
+ * without the field derives complete spans from its `breakpoints` (the historical sweep-only
+ * assumption) until a re-capture writes the truth.
  *
  * @internal
  */
@@ -621,7 +625,10 @@ export function readCoverage(
     const stored = readStoredPlate(resolve(dir, rel))
     if (!stored) continue
     const breakpoints = stored.breakpoints ?? []
-    out[name] = { breakpoints, spans: spansFromBreakpoints(breakpoints) }
+    // Stored spans are the CAPTURED bands (ADR 0029) — a partial session reports
+    // only what it touched. Plates written before the field existed fall back to
+    // the historical complete-coverage assumption until a re-capture.
+    out[name] = { breakpoints, spans: stored.spans ?? spansFromBreakpoints(breakpoints) }
   }
   return out
 }

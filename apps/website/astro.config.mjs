@@ -141,7 +141,7 @@ export default defineConfig({
             { label: 'Responsive & Views', slug: 'guides/responsive-views' },
             { label: 'Nested skeletons', slug: 'guides/nested-skeletons' },
             { label: 'The HUD & Light Box', slug: 'guides/hud-light-box' },
-            { label: 'Capture all views', slug: 'guides/capture-all' },
+            { label: 'The Sweep', slug: 'guides/sweep' },
             { label: 'Fixtures', slug: 'guides/fixtures' },
             { label: 'Capture customization', slug: 'guides/capture-customization' },
             { label: 'Display timing', slug: 'guides/display-timing' },

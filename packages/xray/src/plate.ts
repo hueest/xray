@@ -190,8 +190,18 @@ export interface ViewCapture {
  * Tailwind/Bundle passthrough a clean gen-side seam.
  */
 export interface StoredPlate extends GatedPlate {
-  /** Width thresholds (view boundaries); the HUD coverage derives its bands from these. */
+  /**
+   * Width thresholds (view boundaries), pruned to the plate's OBSERVABLE differences (ADR 0029);
+   * the HUD coverage derives its bands from these.
+   */
   breakpoints: number[]
+  /**
+   * The bands actually CAPTURED (each surviving island's range, folded runs merged — ADR 0029). A
+   * partial browse session stores only the bands it touched; coverage reads these instead of
+   * assuming every band complete. Absent on plates written before the field existed — readers fall
+   * back to the historical complete-coverage assumption until a re-capture.
+   */
+  spans?: Span[]
 }
 
 /** Fixed renderer-owned classes every rendered node carries. */
@@ -406,6 +416,16 @@ export interface FixtureStore {
   register: (name: string, data: unknown) => () => void
   /** True once a recorded Fixture exists for `name` (drives the HUD coverage marker). */
   has: (name: string) => boolean
+  /**
+   * The full per-plate fixture status the HUD renders. `participates` is whether a mounted
+   * render-prop `<Skeleton>` is registering live `data` right now (a plain-children Skeleton never
+   * participates, so it shows no fixture affordances at all). `recorded` mirrors `has`. `replaying`
+   * is whether Replay substitution is IN EFFECT for the next ready render: the Replay toggle is on,
+   * a Fixture exists, and — under `missing-only` — the registered live `data` is nullish. So a
+   * plate can be `recorded` with Replay on and still render live data; the status says which.
+   * Changes to any input (register/dispose, record, seed, the Replay toggle) notify `subscribe`.
+   */
+  status: (name: string) => { participates: boolean; recorded: boolean; replaying: boolean }
   /** The parsed Fixture `data` for `name`, or `undefined` when none is recorded. */
   read: (name: string) => { data: unknown } | undefined
   /**
@@ -428,6 +448,122 @@ export interface FixtureStore {
    */
   seed: (encoded: Record<string, string>) => void
   /** React subscription so the HUD re-renders when a Fixture is recorded or seeded. */
+  subscribe: (onChange: () => void) => () => void
+}
+
+/**
+ * The one-action-at-a-time capture state (the HUD deck contract): recording or Light Box, never
+ * both, engaged globally or for a named set of mounted plates. `idle` is the resting state. The
+ * client enforces the exclusivity — an engage call while the OPPOSITE action is active is a warned
+ * no-op, so a console caller cannot wedge the machine — and the HUD merely renders it.
+ */
+export type XrayModeState =
+  | { action: 'idle' }
+  | { action: 'record'; scope: 'global' | ReadonlySet<string> }
+  | { action: 'lightbox'; scope: 'global' | ReadonlySet<string> }
+
+/**
+ * Dev-only mode store: the state machine behind the HUD's record/play controls.
+ *
+ * Recording is a SESSION with ONE lifecycle at every scope and every level of automation (the
+ * extension is an amplifier, never a semantic switch — ADR 0027 §2): engaging accumulates Views,
+ * disengaging writes. With a sweep-capable extension connected, an engage (global or per-name)
+ * first sweeps the scope's derived widths; without one, your own resizes are the width visits —
+ * either way absence is observed identically and the write happens at stop. Scope narrows what
+ * captures: `'global'` records every mounted site, a name set records only those plates; names join
+ * and leave the scope freely (a join is refused only while a sweep is mid-flight — one shared
+ * viewport). Shrinking a record scope writes the removed plate's Views at that moment; the scope
+ * emptying (or a global stop) writes the rest and returns to `idle`.
+ *
+ * Light Box is a pure view state: no writes, scope toggles freely between names, global wins.
+ */
+export interface ModeStore {
+  get: () => XrayModeState
+  subscribe: (onChange: () => void) => () => void
+  /** Engage/disengage global recording. Resolves once a stop's writes settle (or reject-logged). */
+  setRecord: (on: boolean) => Promise<void>
+  /** Engage/disengage global Light Box. */
+  setLightbox: (on: boolean) => void
+  /** Toggle one plate in a record scope. Resolves once a triggered write settles. */
+  recordName: (name: string, on: boolean) => Promise<void>
+  /** Toggle one plate in a lightbox scope. */
+  lightboxName: (name: string, on: boolean) => void
+  /** True when `name` (or everything) is light-boxed — the dev adapter's read side. */
+  lightboxed: (name: string) => boolean
+}
+
+/** Per-name summary of the mounted `<Skeleton>` sites (the HUD's plate list source). */
+export interface MountedPlate {
+  /**
+   * How many instances of this plate name are mounted; the first in document order writes. `0` for
+   * a STITCH-ONLY entry: the plate's bones are on the page as a stitch of a showing parent
+   * skeleton, but no `<Skeleton>` component of its own is mounted — nothing can capture it, and its
+   * own Light Box is moot while the parent covers it.
+   */
+  instances: number
+  /** The capture-root model of the writing instance (ADR 0014). */
+  captureRoot: 'auto' | 'manual'
+  /** Capture refused (Collect limits, ADR 0022) — the HUD badges the row. */
+  tooLarge: boolean
+  /**
+   * Parent plate names whose SHOWING skeletons are currently rendering this plate as a stitch (ADR
+   * 0006). Present on stitch-only entries and on mounted plates that are ALSO stitched elsewhere on
+   * the page.
+   */
+  stitchedUnder?: readonly string[]
+}
+
+/** Dev-only store of currently mounted capture sites, keyed by plate name. */
+export interface SitesStore {
+  get: () => ReadonlyMap<string, MountedPlate>
+  subscribe: (onChange: () => void) => () => void
+}
+
+/** The recording session's live snapshot (the HUD ticker and plates-list source). */
+export interface SessionSnapshot {
+  /** Widths captured this session, per plate name — empty map when no session ran yet. */
+  views: ReadonlyMap<string, readonly number[]>
+  /**
+   * The write lifecycle of the LAST stop: `idle` until a first stop, `writing` while the sink
+   * settles, `saved` on success, `failed` when any plate's write rejected (the buffered Views are
+   * kept in memory; the next engage retries them).
+   */
+  save: 'idle' | 'writing' | 'saved' | 'failed'
+  /** Plates written by the last successful stop (the `✓ n plates` ticker). */
+  savedCount: number
+  /** The last failed write's message (set with `save: 'failed'`; the HUD error card body). */
+  saveError?: string
+  /** The extension sweep in flight, when recording is sweeping (drives the progress ring). */
+  sweep?: { width: number; index: number; total: number }
+  /** The last sweep failure (extension missing mid-run, DevTools attached, non-convergence). */
+  sweepError?: string
+}
+
+/** Dev-only recording-session store. */
+export interface SessionStore {
+  get: () => SessionSnapshot
+  subscribe: (onChange: () => void) => () => void
+}
+
+/**
+ * Dev-only per-plate capture diagnostics, the HUD-visible mirror of the console warnings: the last
+ * capture's diagnostics per plate name, replaced on every capture (an empty array is a clean
+ * capture). The too-large refusal surfaces here as its diagnostic plus the site's sticky `tooLarge`
+ * flag in the sites store.
+ */
+export interface DiagnosticsStore {
+  get: (name: string) => readonly string[]
+  subscribe: (onChange: () => void) => () => void
+}
+
+/**
+ * Dev-only companion-extension presence (ADR 0010/0030). Fed by the content script's `hello`
+ * beacon: `present` flips on the first hello and never back (no timeout, no false negative);
+ * `version` and `caps` come from the handshake, and the client keys purely on `caps` — a hello
+ * without them announces no usable capability (the HUD shows its update warnline).
+ */
+export interface ExtensionStore {
+  get: () => { present: boolean; version?: string; caps: readonly string[] }
   subscribe: (onChange: () => void) => () => void
 }
 
@@ -488,8 +624,6 @@ export interface CaptureHook {
   plates?: PlateStore
   /** Write side for the dev client's HMR-event handler. Returns whether the plate changed. */
   updatePlate?: (name: string, plate: Plate) => boolean
-  /** Dev-only: run the HUD-triggered capture-all-views sweep via the extension (ADR 0010). */
-  captureAllViews?: () => Promise<void>
   /** Dev-only per-plate breakpoints + captured spans, from disk; fed by the bootstrap. */
   coverage?: CoverageStore
   /**
@@ -509,6 +643,43 @@ export interface CaptureHook {
   recordMode?: 'manual' | 'first-ready' | 'always'
   /** Dev-only Fixture record/replay store (ADR 0015); never present in production. */
   fixtures?: FixtureStore
+  /**
+   * The one-action mode machine behind the HUD's record/play controls. The legacy `capture` and
+   * `lightbox` ToggleStores remain as global-scope facades over it (a console
+   * `__XRAY__.lightbox.set(true)` IS `mode.setLightbox(true)`), so per-tab stickiness and the
+   * `?xray-*` URL seeds keep working unchanged.
+   */
+  mode?: ModeStore
+  /** Mounted capture sites by plate name (the HUD's plate list). */
+  sites?: SitesStore
+  /** The recording session's live snapshot (ticker, progress ring, unsaved counts). */
+  session?: SessionStore
+  /** Last capture diagnostics per plate (the HUD row notes). */
+  diagnostics?: DiagnosticsStore
+  /** Companion-extension presence and capabilities (promo card vs sweep-capable recording). */
+  extension?: ExtensionStore
+  /**
+   * Steel-outline boundary highlight over a mounted plate's capture roots — the HUD row hover/focus
+   * contract. `on: false` clears; clears implicitly on unmount/teardown.
+   */
+  highlight?: (name: string, on: boolean) => void
+  /**
+   * Register a mounted dev `<Skeleton>` by plate name, INDEPENDENT of what it currently shows —
+   * content, the loading skeleton, or Light Box. The sites store lists presence, not capture
+   * boundaries: Light Box unmounts the capture boundary by design, and a light-boxed plate must
+   * stay listed or the control that disengages it disappears with it. `el` resolves the currently
+   * rendered root, the highlight's fallback while no capture site exists. Returns the disposer the
+   * adapter runs when the `<Skeleton>` itself unmounts.
+   */
+  mounted?: (name: string, el?: () => Element | null) => () => void
+  /**
+   * Report the DIRECT stitch names a showing skeleton is currently rendering (the same names the
+   * adapter marks live for the ADR 0020 continuation). The sites store lists them as stitch-only
+   * entries (`instances: 0`, `stitchedUnder`), so a plate whose bones are on the page stays in the
+   * HUD's list even though no component of its own is mounted — the exact hole Light Box on a
+   * stitch-bearing parent opens. Disposed when the skeleton stops showing.
+   */
+  stitched?: (parent: string, names: readonly string[]) => () => void
 }
 
 declare global {

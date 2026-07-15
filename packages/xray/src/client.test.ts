@@ -605,6 +605,16 @@ describe('recording session (the Capture toggle)', () => {
     window.matchMedia('(min-width: 768px)')
     setWidth(390)
     const el = mountSite()
+    // A JS-responsive subtree: the wide layout renders an extra node, so the two
+    // Views differ structurally (identical Views fold at Serialize — ADR 0029).
+    window.addEventListener('resize', () => {
+      const host = el.querySelector('div')
+      if (!host) return
+      const extra = host.querySelector('.wide')
+      if (window.innerWidth >= 768 && !extra)
+        host.insertAdjacentHTML('beforeend', '<p class="wide">w</p>')
+      else if (window.innerWidth < 768 && extra) extra.remove()
+    })
     globalThis.__XRAY__?.captured('my-site', el)
     await waitForRecorded('my-site')
     // Resize into the wider band; wait out the resize debounce (300ms) + settle so the
@@ -701,7 +711,8 @@ describe('recording session (the Capture toggle)', () => {
     document.body.innerHTML = ''
     // Re-mount the SAME plate at a wider width (as if navigating back at a new size).
     setWidth(1024)
-    document.body.innerHTML = '<div id="s2" style="display:contents"><div><p>x</p></div></div>'
+    document.body.innerHTML =
+      '<div id="s2" style="display:contents"><div><p>x</p><p>wide</p></div></div>'
     globalThis.__XRAY__?.captured('my-site', requireElement(document.getElementById('s2'), '#s2'))
     await new Promise((r) => setTimeout(r, 120))
 

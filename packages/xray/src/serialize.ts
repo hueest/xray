@@ -47,14 +47,70 @@ export function serializePlateIR(plate: PlateIR): StoredPlate {
   // Project each View's already-distilled bundle to id-form `{ tree, rules }`. Sort
   // by width defensively to match the live order (PlateIR.views arrive in
   // width-ascending sweep order, so this is normally a no-op).
-  const views = plate.views
+  const projected = plate.views
     .map((view) => emit(view.bundle))
-    .map((projected, i) => ({ width: plate.views[i]?.width ?? 0, ...projected }))
+    .map((proj, i) => ({ width: plate.views[i]?.width ?? 0, ...proj }))
     .toSorted((a, b) => a.width - b.width)
 
-  // SINGLE-View: classify the one View's `{ tree, rules }` with NO gating, so the
-  // stored `{ tree, css }` matches what the live `capture` (GatedPlate) produces
-  // (serialize.test.ts asserts this). An empty bundle stores a null-tree plate.
+  // FOLD identical Views in ADJACENT bands (ADR 0029). Breakpoints arrive as the
+  // PAGE'S union (the matchMedia spy is page-global by construction), so a plate
+  // that does not change across neighboring bands would ship byte-identical
+  // islands and carry gate boundaries a viewer cannot observe — a component absent
+  // below XL would ship four empty islands. Compare id-NORMALIZED projections
+  // (fresh ids from 1 per View, width excluded — geometry lives in the rules, so
+  // views that measure differently never compare equal) and merge each identical
+  // ADJACENT-band run into one island spanning the run. Adjacency is required:
+  // two identical Views separated by an UNSWEPT band prove nothing about the
+  // middle, so they must not merge across it. The stored `breakpoints` drop only
+  // the boundaries INSIDE folded runs — the thresholds proven to separate nothing
+  // — and `spans` record each surviving island's captured range, which is exactly
+  // what coverage reads back out (a partial session stores partial spans).
+  const signatures = projected.map((view) => viewSignature(view))
+  interface Run {
+    view: (typeof projected)[number]
+    signature: string
+    min?: number
+    max?: number
+    /** Original-boundary starts of members AFTER the first — the pruned thresholds. */
+    internal: number[]
+  }
+  const runs: Run[] = []
+  for (const [i, view] of projected.entries()) {
+    const span = viewSpanFor(view.width, plate.breakpoints)
+    const prev = runs.at(-1)
+    if (
+      prev &&
+      prev.signature === signatures[i] &&
+      prev.max !== undefined &&
+      prev.max === span.min
+    ) {
+      prev.max = span.max
+      prev.internal.push(span.min)
+    } else {
+      runs.push({
+        view,
+        signature: signatures[i] ?? '',
+        min: span.min,
+        max: span.max,
+        internal: [],
+      })
+    }
+  }
+  const views = runs.map((run) => run.view)
+  const pruned = new Set(runs.flatMap((run) => run.internal))
+  const breakpoints = plate.breakpoints.filter((b) => !pruned.has(b))
+  const spans = runs.map((run) => ({
+    ...(run.min !== undefined ? { min: run.min } : {}),
+    ...(run.max !== undefined ? { max: run.max } : {}),
+  }))
+
+  // SINGLE-View (captured single, or every band folded into one): classify the one
+  // View's `{ tree, rules }` with NO gating, so the stored `{ tree, css }` matches
+  // what the live `capture` (GatedPlate) produces (serialize.test.ts asserts
+  // this). An empty bundle stores a null-tree plate. A genuinely-single-View
+  // capture KEEPS the detected breakpoints and stores its ONE captured band (the
+  // other bands are unswept gaps, not proven identical); an all-folded plate
+  // stores no breakpoints and one full-axis span.
   if (views.length <= 1) {
     const only = views[0]
     if (!only)
@@ -62,11 +118,12 @@ export function serializePlateIR(plate: PlateIR): StoredPlate {
         v: PLATE_VERSION,
         name: plate.name,
         breakpoints: plate.breakpoints,
+        spans: [],
         tree: null,
         css: '',
       }
     const { tree, css } = classify(only.rules, only.tree, plate.name)
-    return { v: PLATE_VERSION, name: plate.name, breakpoints: plate.breakpoints, tree, css }
+    return { v: PLATE_VERSION, name: plate.name, breakpoints, spans, tree, css }
   }
 
   // MULTI-View: build `root(id:0) → [island_0, island_1, …]`. Each island is a
@@ -76,9 +133,11 @@ export function serializePlateIR(plate: PlateIR): StoredPlate {
   // allocation + rule remap live here, in the browser (ADR 0022).
   //
   // Each View owns a contiguous viewport range: from its own lower breakpoint up to
-  // the next View's, so coverage is gapless — a width with no captured View falls to
-  // the nearest narrower one rather than rendering blank.
-  const starts = views.map((view) => viewSpanFor(view.width, plate.breakpoints).min ?? 0)
+  // the next View's, so RENDERING is gapless — a width with no captured View falls
+  // to the nearest narrower one rather than rendering blank. (The stored `spans`
+  // stay honest about which bands were CAPTURED; the gapless extension is a render
+  // policy, not a coverage claim.)
+  const starts = runs.map((run) => run.min ?? 0)
 
   let nextId = 1
   const islands: PlateNode[] = []
@@ -116,7 +175,20 @@ export function serializePlateIR(plate: PlateIR): StoredPlate {
   })
 
   const { tree, css } = classify(rules, { id: 0, kids: islands }, plate.name)
-  return { v: PLATE_VERSION, name: plate.name, breakpoints: plate.breakpoints, tree, css }
+  return { v: PLATE_VERSION, name: plate.name, breakpoints, spans, tree, css }
+}
+
+/**
+ * A View's identity for the fold: its projected `{ tree, rules }` with ids renumbered from 1 in
+ * walk order and the capture width excluded. Two Views compare equal only when a viewer could not
+ * tell them apart — measured geometry rides in the rule decls, so views that measured differently
+ * (fluid layouts) never fold; hidden (empty) and truly static captures do.
+ */
+function viewSignature(view: { tree: PlateNode; rules: PlateRule[] }): string {
+  let next = 1
+  const idMap = new Map<number, number>()
+  const kids = (view.tree.kids ?? []).map((kid) => cloneWithIds(kid, idMap, () => next++))
+  return JSON.stringify({ t: kids, r: remapRules(view.rules, idMap) })
 }
 
 /** One breakpoint gate: hide this id's subtree (`display:none` inherits) under `condition`. */

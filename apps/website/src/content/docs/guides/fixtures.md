@@ -69,5 +69,5 @@ The HUD marks plates that have a Fixture with a `◆ fixture` tag.
   captures — or hand-author one to design a state that is awkward to reach.
   Scrub recorded data from auth-walled views before committing.
 - **One Fixture per Plate.** Data does not change with viewport, so a single
-  recorded input plus a [Sweep](/guides/capture-all/) produces a
+  recorded input plus a [Sweep](/guides/sweep/) produces a
   full multi-view Plate with zero live state.

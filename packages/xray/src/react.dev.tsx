@@ -31,12 +31,23 @@ export type { SkeletonProps }
 const noSubscribe = () => () => {}
 const alwaysFalse = () => false
 
-/** True while the HUD/console "Light Box" toggle is on. */
-function useLightBox(): boolean {
+/**
+ * True while THIS plate is light-boxed: the global toggle, or the plate's name in a per-plate Light
+ * Box scope (the HUD's per-row play key). Reads through the mode store when the hook carries one;
+ * the bare global toggle covers partial hooks (every CaptureHook field is optional — tests and
+ * direct embedders install exactly the slices they use).
+ */
+function useLightBox(name: string): boolean {
+  const mode = globalThis.__XRAY__?.mode
   const lightbox = globalThis.__XRAY__?.lightbox
+  const subscribe = useCallback(
+    (onChange: () => void) =>
+      mode?.subscribe(onChange) ?? lightbox?.subscribe(onChange) ?? noSubscribe(),
+    [mode, lightbox],
+  )
   return useSyncExternalStore(
-    lightbox?.subscribe ?? noSubscribe,
-    lightbox?.get ?? alwaysFalse,
+    subscribe,
+    () => (mode ? mode.lightboxed(name) : (lightbox?.get() ?? false)),
     alwaysFalse,
   )
 }
@@ -164,7 +175,7 @@ export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
   // the wrapper and hands the boundary marker to the consumer's element via the
   // render prop's `ref` (ADR 0014).
   const manual = props.root === 'manual'
-  const lightBoxOn = useLightBox()
+  const lightBoxOn = useLightBox(plate.name)
   const livePlate = useLivePlate(plate)
   // The min-duration hold (ADR 0016), shared with prod. The ref points at the
   // rendered skeleton root so the hook reads the computed `--xr-skeleton-*`
@@ -173,6 +184,13 @@ export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
   // Content wrapper below, so capture is untouched.
   const rootRef = useRef<HTMLDivElement | null>(null)
   const showSkeleton = useSkeletonTiming(loading, rootRef)
+  // Presence registration: this `<Skeleton>` is on the page, whatever it shows.
+  // The capture boundary below registers only while CONTENT is mounted — and
+  // Light Box unmounts it by design — so the HUD's plate list keys off presence,
+  // or a light-boxed plate would vanish along with its disengage control. The
+  // ref resolver hands the highlight the rendered skeleton root as its fallback
+  // while no capture site exists.
+  useEffect(() => globalThis.__XRAY__?.mounted?.(plate.name, () => rootRef.current), [plate.name])
   // Instant-reveal continuation (ADR 0020), identical to prod: read ONCE at first
   // render whether this plate is a live stitch under a still-showing parent, and
   // mark this plate's direct stitch names live WHILE the skeleton shows (keyed on
@@ -185,6 +203,16 @@ export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
     if (!showSkeleton) return undefined
     return markStitchesLive(collectStitchNames(livePlate.chunks))
   }, [showSkeleton, livePlate.chunks])
+  // Stitch presence for the HUD, SEPARATE from the ADR 0020 continuation marks
+  // above: those are keyed on the loading path alone (their contract is the
+  // loading→standalone handoff), while the stitched plates' bones are on the
+  // page whenever this skeleton shows for ANY reason — loading or Light Box.
+  // Reporting keeps the stitched names listed (as stitch-only rows) even though
+  // no component of theirs is mounted.
+  useEffect(() => {
+    if (!showSkeleton && !lightBoxOn) return undefined
+    return globalThis.__XRAY__?.stitched?.(plate.name, collectStitchNames(livePlate.chunks))
+  }, [showSkeleton, lightBoxOn, livePlate.chunks, plate.name])
   const skeleton = (
     <PlateView
       plate={livePlate}

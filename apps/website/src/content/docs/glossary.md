@@ -66,7 +66,7 @@ _Avoid_: handoff, remount, resume
 
 ### Coverage
 
-Which of a Plate's width bands hold a captured View and which are missing — the HUD's per-plate readout, sourced from the committed plate files. Filling Coverage is the point of browsing and resizing with a capture session on.
+Which of a Plate's width bands hold a captured View and which are missing — the HUD's per-plate readout, sourced from the committed plate files' stored spans (the bands actually captured, including bands captured as empty). Filling Coverage is the point of recording, and one Sweep fills it completely.
 _Avoid_: completeness, progress
 
 ### Crop
@@ -121,7 +121,7 @@ _Avoid_: live reload, HMR (the css half's channel, not the whole act)
 
 ### HUD
 
-The opt-in dev toolbar: per-plate Coverage, the capture-session toggle, Light Box, and the capture-all control. Lives in its own shadow DOM; dev-only, never ships.
+The opt-in dev deck: the record and Light Box controls, the status ticker, guidance cards, and the plates list with per-plate keys and Coverage segments. Lives in its own shadow DOM; dev-only, never ships.
 _Avoid_: toolbar, overlay, devtools
 
 ### Ink
@@ -199,6 +199,11 @@ _Avoid_: importance, priority, weight, attention
 The single step that projects the fully-annotated Light-DOM into the shipped Plate, the one place structure changes: dropped nodes fall out, Template counts expand, flattened wrappers splice, folded bars realize; then the rules are content-addressed (ADR 0007) and the Views gated (ADR 0004). Runs in the browser over the whole per-Plate bundle and writes a Plate as close to the final rendered HTML/CSS as re-renderability allows. See ADR 0022.
 _Avoid_: project, projection (reserved for the View-divergence sense), emit, lower, merge
 
+### Session
+
+The unit of recording: engaging accumulates Views into per-Plate bundles — browsing, resizing, and the Sweep's emulated widths all feed the one accumulate path — and the stop writes each recorded Plate once, replace semantics. Manual Sessions end when the user ends them; the Sweep ends its own on success (ADR 0027).
+_Avoid_: batch, transaction, run
+
 ### Settle
 
 The quiescence wait between readiness and Capture: fonts ready, lazy images decoded, a quiet `ResizeObserver`, plus the configured delay, bounded by the settle cap so a busy subtree is eventually captured anyway (ADR 0025). Settle decides when the final rendering is on screen, not whether to capture.
@@ -226,8 +231,8 @@ _Avoid_: cull, contain, cover, occlude, eclipse, nest
 
 ### Sweep
 
-The capture-all act (ADR 0010): one dev session drives the viewport through every discovered width band, via the extension's emulation, capturing each View of every mounted Plate into its per-Plate bundle. The same DOM persists across a Plate's View captures, so the whole bundle is built in one session.
-_Avoid_: crawl, scan, resize loop, capture-all (the feature; Sweep is the act)
+The automated width visits (ADR 0010, ADR 0030): engaging record with the companion extension connected drives the viewport through every discovered width band, captures each View of every mounted Plate into its per-Plate bundle — recording observed absence as empty Views — and on success ends the Session itself. The same DOM persists across a Plate's View captures, so the whole bundle is built in one Session; a failed Sweep never writes.
+_Avoid_: crawl, scan, resize loop, capture-all
 
 ### Template
 

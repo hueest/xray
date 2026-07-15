@@ -235,6 +235,19 @@ const storedPlateSchema: v.GenericSchema<StoredPlate> = v.object({
   v: v.literal(PLATE_VERSION),
   name: v.pipe(v.string(), v.check(isValidPlateName, 'invalid plate name')),
   breakpoints: v.pipe(v.array(v.pipe(finiteNumber, v.minValue(0))), v.maxLength(MAX_BREAKPOINTS)),
+  // The captured bands (ADR 0029); optional — plates written before the field
+  // existed omit it, and readers fall back to complete-coverage.
+  spans: v.optional(
+    v.pipe(
+      v.array(
+        v.object({
+          min: v.optional(v.pipe(finiteNumber, v.minValue(0))),
+          max: v.optional(v.pipe(finiteNumber, v.minValue(0))),
+        }),
+      ),
+      v.maxLength(MAX_BREAKPOINTS + 1),
+    ),
+  ),
   tree: v.nullable(renderNodeSchema),
   css: v.pipe(v.string(), v.check(isValidPlateCss, 'invalid plate css')),
 })

@@ -82,11 +82,14 @@ The stages after Settle:
   width range it owns (ADR 0004). It runs in the browser over the whole
   bundle, so the analysis-only geometry never crosses the wire.
 
-A Plate covers multiple Views. The Sweep (the HUD's capture-all, driven by the
-dev-only extension — ADR 0010) resizes the viewport through every derived width
-band in one session, appending one measured tree per View into the same bundle
-before Distil and Serialize run. Breakpoints are derived from matching `@media`
-rules plus intercepted `matchMedia` calls; there is no breakpoints config.
+A Plate covers multiple Views. The Sweep (pressing record with the dev-only
+extension connected — ADR 0010, ADR 0030) resizes the viewport through every
+derived width band in one Session, appending one measured tree per View into
+the same bundle — including empty Views for bands where a component is absent
+or renders nothing — and ends the Session itself on success. Breakpoints are
+derived from matching `@media` rules plus intercepted `matchMedia` calls, and
+Serialize folds identical adjacent Views and prunes the boundaries between
+them (ADR 0029); there is no breakpoints config.
 
 The dev server's `POST /__xray` endpoint treats every payload as untrusted: one
 structural validator (`parseStoredPlate`) guards both the POST and disk reads,
@@ -227,18 +230,25 @@ would remount the capture boundary and re-fire capture
 
 ## Dev tools
 
-- **HUD** (opt-in): per-plate Coverage — which width bands hold a captured View
-  and which are missing — plus the Capture, Light Box, and capture-all
-  controls. Lives in its own shadow DOM.
+- **HUD** (opt-in): the dev deck — record and Light Box controls, the status
+  ticker, and the plates list with per-plate keys and Coverage segments (which
+  width bands hold a captured View and which are missing). Solid-rendered in
+  its own shadow DOM
+  ([ADR 0028](https://github.com/hueest/xray/blob/main/docs/adr/0028-solid-hud.md)).
 - **Light Box**: flips every mounted `<Skeleton>` to its skeleton for visual
-  checks. Sticky per tab via `sessionStorage`; seedable with `?xray-lightbox`;
-  scriptable via `__XRAY__.lightbox.set(true)`.
-- **Capture session**: the Capture toggle. While on, browsing and resizing
-  accumulate captures per Site and View; turning it off writes the buffered
-  plates. The Blink confirms each write that changed a plate.
-- **Sweep**: one click captures every View of every mounted Plate by driving
-  the viewport through the derived width bands (dev-only extension,
-  [ADR 0010](https://github.com/hueest/xray/blob/main/docs/adr/0010-capture-all-views-via-extension.md)).
+  checks — globally or per Plate. Sticky per tab via `sessionStorage`;
+  seedable with `?xray-lightbox`; scriptable via
+  `__XRAY__.mode.setLightbox(true)`.
+- **Session**: recording. While engaged, browsing, resizing, and the Sweep's
+  emulated widths accumulate captures through one path; the stop writes the
+  buffered plates
+  ([ADR 0027](https://github.com/hueest/xray/blob/main/docs/adr/0027-one-session-one-mode.md)).
+  The Blink confirms each capture that changed a recorded result.
+- **Sweep**: pressing record with the dev-only extension connected captures
+  every View of every mounted Plate by driving the viewport through the
+  derived width bands, then ends the Session itself
+  ([ADR 0010](https://github.com/hueest/xray/blob/main/docs/adr/0010-capture-all-views-via-extension.md),
+  [ADR 0030](https://github.com/hueest/xray/blob/main/docs/adr/0030-dev-bridge-protocol.md)).
 - **Fixtures**: Record a Skeleton's render-input `data` to a sidecar and Replay
   it later, so hard-to-reproduce states can be re-captured on demand
   ([ADR 0015](https://github.com/hueest/xray/blob/main/docs/adr/0015-fixtures-dev-only-record-and-replay.md)).
@@ -275,7 +285,7 @@ The token table and recipes live in the
 | `src/react.core.tsx`                         | browser        | shared render core (hook-free `renderPlate` over chunks + `useSkeletonTiming`); the contract a new adapter mirrors                                                                                                                                                                                                                                                                      |
 | `src/chunk.ts`                               | node           | framework-neutral serializer: build-time tree → shipped `Chunk[]` ([ADR 0008](https://github.com/hueest/xray/blob/main/docs/adr/0008-framework-agnostic-core-thin-adapters.md))                                                                                                                                                                                                         |
 | `@hueest/xray/internal/client` (`client.ts`) | browser (dev)  | internal entry point (not consumer API — the injected dev bootstrap imports it): settle + capture orchestration + `matchMedia` interception; runs Serialize and POSTs plates                                                                                                                                                                                                            |
-| `@hueest/xray/internal/hud` (`hud.ts`)       | browser (dev)  | internal entry point (not consumer API — the bootstrap wires it up when `hud: true`): the coverage HUD with the Capture, Light Box, and capture-all controls                                                                                                                                                                                                                            |
+| `@hueest/xray/internal/hud` (`hud.ts`)       | browser (dev)  | internal entry point (not consumer API — the bootstrap wires it up when `hud: true`): the dev deck (record/Light Box, Coverage, per-plate keys), Solid-rendered — ADR 0028                                                                                                                                                                                                              |
 | `src/measure.ts`                             | browser        | **Measure** — the sole DOM-touching stage ([ADR 0022](https://github.com/hueest/xray/blob/main/docs/adr/0022-uniform-pass-pipeline.md) inv. 5): walks a live subtree directly into the Light-DOM IR (geometry/style/ink snapshotted); hosts `distilPlate`, which callers run before Serialize                                                                                           |
 | `src/ir.ts`                                  | browser        | the Light-DOM IR (`IRNode`/`PlateIR`/`LiteStyleDeclaration`) + `emit` (IR → id-form `{tree, rules}`) and the `effective*` Annotation accessors ([ADR 0021](https://github.com/hueest/xray/blob/main/docs/adr/0021-ink-driven-grouping.md)/[0022](https://github.com/hueest/xray/blob/main/docs/adr/0022-uniform-pass-pipeline.md))                                                      |
 | `src/distil.ts`                              | browser        | **Distil** — the annotate-only `IR → IR` passes in fixed order: markInk → glyph-fold → Flatten → Superset → Crop (2D) → Template (last) ([ADR 0022](https://github.com/hueest/xray/blob/main/docs/adr/0022-uniform-pass-pipeline.md) §3–4)                                                                                                                                              |

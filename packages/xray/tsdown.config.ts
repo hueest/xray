@@ -1,4 +1,5 @@
 import { defineConfig } from 'tsdown'
+import solid from 'vite-plugin-solid'
 
 export default defineConfig([
   {
@@ -24,11 +25,11 @@ export default defineConfig([
       core: 'src/core.ts',
       react: 'src/react.tsx',
       'react.dev': 'src/react.dev.tsx',
-      // Dev bootstrap implementation modules. Private: reachable only through the
-      // `./internal/*` package subpaths the plugin-generated bootstrap imports,
-      // not as top-level public API.
+      // Dev bootstrap implementation module. Private: reachable only through the
+      // `./internal/client` package subpath the plugin-generated bootstrap
+      // imports, not as top-level public API. (`hud` builds in its OWN config
+      // below — it is Solid-compiled, and its graph must stay isolated.)
       client: 'src/client.ts',
-      hud: 'src/hud.ts',
     },
     format: ['esm'],
     platform: 'browser',
@@ -55,6 +56,24 @@ export default defineConfig([
     // reasoning as devalue) AND, because `react.js` reaches no runtime serialize
     // code, keeps pretext out of the production bundle entirely — the ADR's hard
     // constraint. Verified post-build: `react.js` contains no pretext symbols.
+  },
+  {
+    // The dev HUD, alone: the ONE Solid-compiled entry (the HUD is Solid 2.0;
+    // everything else stays framework-neutral or React). A separate config keeps
+    // the Solid transform away from the React/neutral graphs entirely — no
+    // include filters, no shared chunks — at the cost of duplicating the few
+    // plate.ts types it uses (erased anyway). solid-js/@solidjs/web are
+    // devDependencies, so they bundle INTO this chunk by default: the consumer
+    // resolves nothing, and no Solid symbol can reach any other chunk by
+    // construction (pinned by exports.test).
+    entry: { hud: 'src/hud.tsx' },
+    format: ['esm'],
+    platform: 'browser',
+    dts: true,
+    clean: false,
+    failOnWarn: true,
+    fixedExtension: false,
+    plugins: [solid()],
     // Package-quality validation runs on THIS config because it builds last, so
     // every dist file the exports map names exists when the checks read them.
     // publint checks package.json against the emitted files; attw checks the

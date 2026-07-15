@@ -1,28 +1,47 @@
 // @vitest-environment happy-dom
-import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, assert, describe, expect, it, vi } from 'vitest'
+import { flush } from 'solid-js'
 
-import { installXrayHud } from './hud.ts'
-import type { CaptureHook, CoverageStore, PlateCoverage, ToggleStore } from './plate.ts'
+import { installXrayHud } from './hud.tsx'
+import type {
+  CaptureHook,
+  ModeStore,
+  MountedPlate,
+  PlateCoverage,
+  SessionSnapshot,
+  ToggleStore,
+  XrayModeState,
+} from './plate.ts'
 
 /**
- * DOM tests for the dev HUD (hud.ts). The HUD renders entirely from the `globalThis.__XRAY__` hook,
- * probes for the companion extension over `window.postMessage`, and shows a sweep button (extension
- * present) or a promo (absent). We drive the real seams: a hand-built `__XRAY__` hook, a dispatched
- * extension `hello`, and a stubbed `captureAllViews` for the status path.
- *
- * The panel lives in a shadow root on a `[data-xray-hud]` host appended to body.
+ * DOM tests for the Solid HUD. The HUD is a pure projection of the `__XRAY__` stores (ADR 0027 §4):
+ * every test builds a fake hook, mutates its stores, and asserts the shadow DOM. Writes are flushed
+ * (Solid batches on microtasks) and the store subscriptions attach on settle, so `tick` runs a
+ * flush plus a macrotask.
  */
 
-let hud: { dispose: () => void } | undefined
+let handle: { dispose: () => void } | undefined
 
-/** A minimal in-memory toggle store, like the client's `createToggleStore`. */
+afterEach(() => {
+  handle?.dispose()
+  handle = undefined
+  globalThis.__XRAY__ = undefined
+  document.body.innerHTML = ''
+  vi.restoreAllMocks()
+})
+
+const tick = async (): Promise<void> => {
+  flush()
+  await new Promise((r) => setTimeout(r, 0))
+  flush()
+}
+
 function makeToggle(initial = false): ToggleStore {
   let value = initial
   const listeners = new Set<() => void>()
   return {
     get: () => value,
     set(next) {
-      if (next === value) return
       value = next
       for (const cb of listeners) cb()
     },
@@ -33,273 +52,515 @@ function makeToggle(initial = false): ToggleStore {
   }
 }
 
-/** A minimal in-memory coverage store, like the client's. */
-function makeCoverage(initial: Record<string, PlateCoverage> = {}): CoverageStore {
-  const map = new Map(Object.entries(initial))
-  const listeners = new Set<() => void>()
-  return {
-    get: () => map,
-    set(name, coverage) {
-      map.set(name, coverage)
-      for (const cb of listeners) cb()
-    },
-    subscribe(cb) {
-      listeners.add(cb)
-      return () => listeners.delete(cb)
-    },
-  }
+interface FakeStores {
+  hook: CaptureHook
+  setMode: (state: XrayModeState) => void
+  setSession: (patch: Partial<SessionSnapshot>) => void
+  setSites: (entries: Record<string, Partial<MountedPlate>>) => void
+  setCoverage: (entries: Record<string, PlateCoverage>) => void
+  setExtension: (state: { present: boolean; version?: string; caps: readonly string[] }) => void
+  setFixture: (
+    name: string,
+    status: { participates: boolean; recorded: boolean; replaying: boolean },
+  ) => void
+  setDiagnostics: (name: string, lines: string[]) => void
+  mode: ModeStore
+  replay: ToggleStore
+  highlight: ReturnType<typeof vi.fn>
 }
 
-function installHook(overrides: Partial<CaptureHook> = {}): void {
-  globalThis.__XRAY__ = {
+function makeHook(): FakeStores {
+  const listeners = {
+    mode: new Set<() => void>(),
+    session: new Set<() => void>(),
+    sites: new Set<() => void>(),
+    coverage: new Set<() => void>(),
+    extension: new Set<() => void>(),
+    fixtures: new Set<() => void>(),
+    diagnostics: new Set<() => void>(),
+  }
+  const notify = (key: keyof typeof listeners) => {
+    for (const cb of listeners[key]) cb()
+  }
+  const sub =
+    (key: keyof typeof listeners) =>
+    (cb: () => void): (() => void) => {
+      listeners[key].add(cb)
+      return () => listeners[key].delete(cb)
+    }
+
+  let modeState: XrayModeState = { action: 'idle' }
+  let session: SessionSnapshot = { views: new Map(), save: 'idle', savedCount: 0 }
+  const sitesMap = new Map<string, MountedPlate>()
+  const coverageMap = new Map<string, PlateCoverage>()
+  let extension: { present: boolean; version?: string; caps: readonly string[] } = {
+    present: false,
+    caps: [],
+  }
+  const fixtureStatuses = new Map<
+    string,
+    { participates: boolean; recorded: boolean; replaying: boolean }
+  >()
+  const diagnosticsMap = new Map<string, string[]>()
+  const replay = makeToggle(false)
+  const highlight = vi.fn()
+
+  const mode: ModeStore = {
+    get: () => modeState,
+    subscribe: sub('mode'),
+    setRecord: vi.fn(async (on: boolean) => {
+      modeState = on ? { action: 'record', scope: 'global' } : { action: 'idle' }
+      notify('mode')
+    }),
+    setLightbox: vi.fn((on: boolean) => {
+      modeState = on ? { action: 'lightbox', scope: 'global' } : { action: 'idle' }
+      notify('mode')
+    }),
+    recordName: vi.fn(async (name: string, on: boolean) => {
+      const scope =
+        modeState.action === 'record' && modeState.scope !== 'global'
+          ? new Set(modeState.scope)
+          : new Set<string>()
+      if (on) scope.add(name)
+      else scope.delete(name)
+      modeState = scope.size > 0 ? { action: 'record', scope } : { action: 'idle' }
+      notify('mode')
+    }),
+    lightboxName: vi.fn((name: string, on: boolean) => {
+      const scope =
+        modeState.action === 'lightbox' && modeState.scope !== 'global'
+          ? new Set(modeState.scope)
+          : new Set<string>()
+      if (on) scope.add(name)
+      else scope.delete(name)
+      modeState = scope.size > 0 ? { action: 'lightbox', scope } : { action: 'idle' }
+      notify('mode')
+    }),
+    lightboxed: (name) =>
+      modeState.action === 'lightbox' &&
+      (modeState.scope === 'global' || modeState.scope.has(name)),
+  }
+
+  const hook: CaptureHook = {
     captured: () => undefined,
-    capture: makeToggle(false),
-    lightbox: makeToggle(false),
-    coverage: makeCoverage(),
-    captureAllViews: () => Promise.resolve(),
-    ...overrides,
+    mode,
+    replay,
+    session: { get: () => session, subscribe: sub('session') },
+    sites: { get: () => sitesMap, subscribe: sub('sites') },
+    coverage: {
+      get: () => coverageMap,
+      set: (name, cov) => {
+        coverageMap.set(name, cov)
+        notify('coverage')
+      },
+      subscribe: sub('coverage'),
+    },
+    extension: { get: () => extension, subscribe: sub('extension') },
+    diagnostics: { get: (name) => diagnosticsMap.get(name) ?? [], subscribe: sub('diagnostics') },
+    fixtures: {
+      register: () => () => {},
+      has: (name) => fixtureStatuses.get(name)?.recorded ?? false,
+      status: (name) =>
+        fixtureStatuses.get(name) ?? { participates: false, recorded: false, replaying: false },
+      read: () => undefined,
+      record: async () => {},
+      recordAll: async () => {},
+      seed: () => {},
+      subscribe: sub('fixtures'),
+    },
+    highlight,
+  }
+
+  return {
+    hook,
+    mode,
+    replay,
+    highlight,
+    setMode: (state) => {
+      modeState = state
+      notify('mode')
+    },
+    setSession: (patch) => {
+      session = { ...session, ...patch }
+      notify('session')
+    },
+    setSites: (entries) => {
+      sitesMap.clear()
+      for (const [name, info] of Object.entries(entries)) {
+        sitesMap.set(name, { instances: 1, captureRoot: 'auto', tooLarge: false, ...info })
+      }
+      notify('sites')
+    },
+    setCoverage: (entries) => {
+      coverageMap.clear()
+      for (const [name, cov] of Object.entries(entries)) coverageMap.set(name, cov)
+      notify('coverage')
+    },
+    setExtension: (state) => {
+      extension = state
+      notify('extension')
+    },
+    setFixture: (name, status) => {
+      fixtureStatuses.set(name, status)
+      notify('fixtures')
+    },
+    setDiagnostics: (name, lines) => {
+      diagnosticsMap.set(name, lines)
+      notify('diagnostics')
+    },
   }
 }
 
-/** The HUD's shadow root, after install. */
 function shadow(): ShadowRoot {
   const host = document.querySelector('[data-xray-hud]')
-  if (!host?.shadowRoot) throw new Error('HUD host not mounted')
+  assert(host?.shadowRoot, 'expected the HUD host with a shadow root')
   return host.shadowRoot
 }
 
-/** The sweep button, asserted present (only rendered once the extension says hello). */
-function actionButton(): HTMLButtonElement {
-  const button = shadow().querySelector<HTMLButtonElement>('.action')
-  assert(button, 'expected the sweep button to be rendered')
-  return button
+async function installWith(stores: FakeStores): Promise<void> {
+  globalThis.__XRAY__ = stores.hook
+  handle = installXrayHud()
+  await tick()
 }
 
-/** A promise plus its resolve handle, for controlling an in-flight sweep. */
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void
-  const promise = new Promise<void>((r) => {
-    resolve = r
+function q(selector: string): Element {
+  const el = shadow().querySelector(selector)
+  assert(el, `expected ${selector} in the HUD`)
+  return el
+}
+
+function qButton(selector: string): HTMLButtonElement {
+  const el = q(selector)
+  assert(el instanceof HTMLButtonElement, `expected ${selector} to be a button`)
+  return el
+}
+
+function text(selector: string): string {
+  return q(selector).textContent?.replaceAll(/\s+/g, ' ').trim() ?? ''
+}
+
+const click = (el: Element) => {
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
+}
+
+/** A standard two-plate scene: hero covered 2/3 bands, card covered 1/1. */
+async function standardScene(): Promise<FakeStores> {
+  const stores = makeHook()
+  stores.setSites({ hero: {}, card: {} })
+  stores.setCoverage({
+    hero: {
+      breakpoints: [640, 1200],
+      spans: [
+        { min: 640, max: 1200 },
+        { min: 1200, max: undefined },
+      ],
+    },
+    card: { breakpoints: [], spans: [{ min: undefined, max: undefined }] },
   })
-  return { promise, resolve }
+  await installWith(stores)
+  return stores
 }
 
-/** Simulate the extension announcing itself with a `hello`. */
-function sendHello(): void {
-  window.dispatchEvent(
-    new MessageEvent('message', {
-      data: { source: 'xray-ext', kind: 'hello' },
-      source: window,
-    }),
-  )
-}
+describe('deck', () => {
+  it('renders the two controls, the ticker, and the wordmark', async () => {
+    await standardScene()
+    expect(q('.ctl.rec')).toBeTruthy()
+    expect(q('.ctl.play')).toBeTruthy()
+    expect(q('.wordmark').getAttribute('aria-label')).toBe('xray')
+    // 3 of 4 bands covered across the two mounted plates.
+    expect(text('.tick')).toBe('3/4 views')
+  })
 
-beforeEach(() => {
-  installHook()
+  it('record click drives mode.setRecord and the recording state renders', async () => {
+    const stores = await standardScene()
+    click(q('.ctl.rec'))
+    expect(stores.mode.setRecord).toHaveBeenCalledWith(true)
+    await tick()
+    expect(q('.ctl.rec').getAttribute('aria-pressed')).toBe('true')
+    expect(qButton('.ctl.play').disabled).toBe(true)
+    expect(text('.tick')).toBe('● 0 views')
+  })
+
+  it('sweep progress rides the ticker and the ring while recording', async () => {
+    const stores = await standardScene()
+    stores.setMode({ action: 'record', scope: 'global' })
+    stores.setSession({ sweep: { width: 768, index: 2, total: 5 } })
+    await tick()
+    expect(text('.tick')).toBe('● 768px · 2/5')
+    expect(q('.ctl.rec').className).toContain('sweeping')
+  })
+
+  it('Light Box on: play pressed, record disabled, skeleton count in the ticker', async () => {
+    const stores = await standardScene()
+    click(q('.ctl.play'))
+    expect(stores.mode.setLightbox).toHaveBeenCalledWith(true)
+    await tick()
+    expect(q('.ctl.play').getAttribute('aria-pressed')).toBe('true')
+    expect(qButton('.ctl.rec').disabled).toBe(true)
+    expect(text('.tick')).toBe('▶ 2 skeletons')
+  })
+
+  it('write lifecycle: failed shows the error card with the sink message', async () => {
+    const stores = await standardScene()
+    stores.setSession({ save: 'failed', saveError: 'xray sink POST failed: 413' })
+    await tick()
+    expect(text('.card.err')).toContain('write failed')
+    expect(text('.card.err')).toContain('413')
+    stores.setSession({ save: 'saved', saveError: undefined, savedCount: 2 })
+    await tick()
+    expect(shadow().querySelector('.card.err')).toBeNull()
+    expect(text('.tick')).toContain('✓ 2')
+  })
 })
 
-afterEach(() => {
-  hud?.dispose()
-  hud = undefined
-  globalThis.__XRAY__ = undefined
-  document.body.innerHTML = ''
-  vi.restoreAllMocks()
-})
-
-describe('installXrayHud rendering', () => {
-  it('mounts a shadow-rooted panel on the body', () => {
-    hud = installXrayHud()
-    const host = document.querySelector('[data-xray-hud]')
-    expect(host).not.toBeNull()
-    expect(host?.shadowRoot?.querySelector('.hud')).not.toBeNull()
+describe('cards', () => {
+  it('no skeletons: guidance card, both controls disabled', async () => {
+    const stores = makeHook()
+    await installWith(stores)
+    expect(text('.card')).toContain('No skeletons on this page')
+    expect(qButton('.ctl.rec').disabled).toBe(true)
+    expect(qButton('.ctl.play').disabled).toBe(true)
   })
 
-  it('titles itself with the plate count from coverage', () => {
-    installHook({
-      coverage: makeCoverage({
-        hero: { breakpoints: [], spans: [] },
-        card: { breakpoints: [], spans: [] },
-      }),
+  it('first run: nothing captured card; play disabled until something exists', async () => {
+    const stores = makeHook()
+    stores.setSites({ hero: {} })
+    await installWith(stores)
+    expect(text('.card')).toContain('Nothing captured yet')
+    expect(qButton('.ctl.rec').disabled).toBe(false)
+    expect(qButton('.ctl.play').disabled).toBe(true)
+  })
+
+  it('promo card while the extension is absent; swaps for the warnline when it is stale', async () => {
+    const stores = await standardScene()
+    expect(text('.card.promo')).toContain('Get the xray extension')
+    stores.setExtension({ present: true, version: '0.1.0', caps: [] })
+    await tick()
+    expect(shadow().querySelector('.card.promo')).toBeNull()
+    expect(text('.warnline')).toContain('update it')
+    stores.setExtension({ present: true, version: '1.0.0', caps: ['emulate'] })
+    await tick()
+    expect(shadow().querySelector('.warnline')).toBeNull()
+  })
+})
+
+describe('plates section', () => {
+  it('opens with mounted rows (sorted), segments, and dim on-disk rows', async () => {
+    const stores = await standardScene()
+    stores.setCoverage({
+      hero: { breakpoints: [640, 1200], spans: [{ min: 640, max: 1200 }] },
+      card: { breakpoints: [], spans: [{ min: undefined, max: undefined }] },
+      'news-feed': { breakpoints: [900], spans: [{ min: 900, max: undefined }] },
     })
-    hud = installXrayHud()
-    expect(shadow().querySelector('.title')?.textContent).toBe('xray — 2 plates')
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    const names = [...shadow().querySelectorAll('.plate .name')].map((el) => el.textContent)
+    expect(names).toEqual(['card', 'hero', 'news-feed'])
+    // hero: 3 bands, middle covered, outer two dashed-missing.
+    const heroSegs = [...shadow().querySelectorAll('.plate')]
+      .find((p) => p.querySelector('.name')?.textContent === 'hero')
+      ?.querySelectorAll('.seg')
+    assert(heroSegs)
+    expect([...heroSegs].map((s) => s.className)).toEqual(['seg', 'seg c', 'seg'])
+    expect([...heroSegs].map((s) => s.textContent)).toEqual(['‹640', '640–1.2k', '≥1.2k'])
+    // news-feed is on disk only: dimmed, with a view count, no keys.
+    const disk = [...shadow().querySelectorAll('.plate.unmounted')]
+    expect(disk).toHaveLength(1)
+    expect(disk[0]?.textContent).toContain('news-feed')
+    expect(disk[0]?.textContent).toContain('1 view')
+    expect(disk[0]?.querySelector('.key')).toBeNull()
   })
 
-  it('renders per-plate band chips, lit for covered spans and dim for missing', () => {
-    installHook({
-      coverage: makeCoverage({
-        hero: { breakpoints: [768], spans: [{ min: undefined, max: 768 }] },
-      }),
-    })
-    hud = installXrayHud()
-    const chips = [...shadow().querySelectorAll('.band')]
-    // breakpoints:[768] → two bands: [0,768) covered, [768,∞) missing.
-    expect(chips.map((c) => c.textContent)).toEqual(['[0,768)', '[768,∞)'])
-    expect(chips[0]?.className).toContain('covered')
-    expect(chips[1]?.className).toContain('missing')
-  })
-})
-
-describe('installXrayHud extension detection (promo vs button)', () => {
-  it('posts a whois probe on install', () => {
-    const post = vi.spyOn(window, 'postMessage')
-    hud = installXrayHud()
-    expect(post).toHaveBeenCalledWith({ source: 'xray', kind: 'whois' }, '*')
+  it('session views render fresh segments while recording', async () => {
+    const stores = await standardScene()
+    stores.setMode({ action: 'record', scope: 'global' })
+    stores.setSession({ views: new Map([['hero', [390]]]) })
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    const heroSegs = [...shadow().querySelectorAll('.plate')]
+      .find((p) => p.querySelector('.name')?.textContent === 'hero')
+      ?.querySelectorAll('.seg')
+    assert(heroSegs)
+    expect(heroSegs[0]?.className).toBe('seg f')
   })
 
-  it('shows the promo (no button) before the extension is detected', () => {
-    hud = installXrayHud()
-    expect(shadow().querySelector('.action')).toBeNull()
-    expect(shadow().querySelector('.promo')?.textContent).toContain('Install the xray extension')
-  })
-
-  it('flips to the sweep button when a hello arrives', () => {
-    hud = installXrayHud()
-    expect(shadow().querySelector('.action')).toBeNull()
-    sendHello()
-    const button = shadow().querySelector('.action')
-    expect(button).not.toBeNull()
-    expect(button?.textContent).toBe('Capture all views')
-    expect(shadow().querySelector('.promo')).toBeNull()
-  })
-
-  it('ignores hello-shaped messages from a different window source', () => {
-    hud = installXrayHud()
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: { source: 'xray-ext', kind: 'hello' },
-        source: null,
-      }),
+  it('per-plate keys drive recordName/lightboxName; global record disables them', async () => {
+    const stores = await standardScene()
+    click(q('.plates-line'))
+    await tick()
+    const heroRow = [...shadow().querySelectorAll('.plate')].find(
+      (p) => p.querySelector('.name')?.textContent === 'hero',
     )
-    expect(shadow().querySelector('.action')).toBeNull()
-    expect(shadow().querySelector('.promo')).not.toBeNull()
+    assert(heroRow)
+    const [recKey, playKey] = heroRow.querySelectorAll('.key')
+    assert(recKey && playKey)
+    click(playKey)
+    expect(stores.mode.lightboxName).toHaveBeenCalledWith('hero', true)
+    await tick()
+    // The lit key and the disabled opposite side, per the exclusivity matrix.
+    expect(
+      heroRow.querySelector('.key.on-play') ?? shadow().querySelector('.plate .key.on-play'),
+    ).toBeTruthy()
+    expect(qButton('.ctl.rec').disabled).toBe(true)
+    // Back off, then record the plate instead.
+    const litPlay = shadow().querySelector('.key.on-play')
+    assert(litPlay)
+    click(litPlay)
+    await tick()
+    const recAgain = [...shadow().querySelectorAll('.plate')]
+      .find((p) => p.querySelector('.name')?.textContent === 'hero')
+      ?.querySelector('.key')
+    assert(recAgain)
+    click(recAgain)
+    expect(stores.mode.recordName).toHaveBeenCalledWith('hero', true)
+
+    // Global recording disables every key.
+    stores.setMode({ action: 'record', scope: 'global' })
+    await tick()
+    for (const key of shadow().querySelectorAll('.key')) {
+      assert(key instanceof HTMLButtonElement)
+      expect(key.disabled).toBe(true)
+    }
   })
 
-  it('hides both button and promo when captureAllViews is absent (prod-like hook)', () => {
-    installHook({ captureAllViews: undefined })
-    hud = installXrayHud()
-    sendHello()
-    expect(shadow().querySelector('.action')).toBeNull()
-    expect(shadow().querySelector('.promo')).toBeNull()
+  it('fixture badge, replay line, and diagnostics note', async () => {
+    const stores = await standardScene()
+    stores.setFixture('hero', { participates: true, recorded: true, replaying: true })
+    stores.setDiagnostics('card', ['tree too large: 4913 nodes over the 4096 limit'])
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    const badge = q('.badge.fx')
+    expect(badge.getAttribute('title')).toContain('replaying')
+    expect(text('.note.err')).toContain('4913 nodes')
+    const replaySwitch = qButton('.switch')
+    expect(replaySwitch.getAttribute('aria-checked')).toBe('false')
+    click(replaySwitch)
+    await tick()
+    expect(stores.replay.get()).toBe(true)
+    expect(q('.switch').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('hovering a row highlights its boundary and unhovering clears it', async () => {
+    const stores = await standardScene()
+    click(q('.plates-line'))
+    await tick()
+    const row = shadow().querySelector('.plate')
+    assert(row)
+    row.dispatchEvent(new MouseEvent('mouseenter'))
+    expect(stores.highlight).toHaveBeenCalledWith('card', true)
+    row.dispatchEvent(new MouseEvent('mouseleave'))
+    expect(stores.highlight).toHaveBeenCalledWith('card', false)
   })
 })
 
-describe('installXrayHud sweep status', () => {
-  it('disables the button mid-sweep and shows a success status when it resolves', async () => {
-    const sweep = deferred()
-    const captureAllViews = vi.fn(() => sweep.promise)
-    installHook({ captureAllViews })
-    hud = installXrayHud()
-    sendHello()
+describe('plates-line summary', () => {
+  it('one grammar across states: skeletons, unsaved-over-gaps, disk stock, empty page', async () => {
+    const stores = await standardScene()
+    // Idle with a gap, nothing on disk beyond the page.
+    expect(text('.plates-line')).toContain('2 skeletons · 1 gap · 2 plates on disk')
+    // Disk-only plates close the line.
+    stores.setCoverage({
+      hero: {
+        breakpoints: [640, 1200],
+        spans: [
+          { min: 640, max: 1200 },
+          { min: 1200, max: undefined },
+        ],
+      },
+      card: { breakpoints: [], spans: [{ min: undefined, max: undefined }] },
+      'news-feed': { breakpoints: [900], spans: [{ min: 900, max: undefined }] },
+    })
+    await tick()
+    expect(text('.plates-line')).toContain('2 skeletons · 1 gap · 3 plates on disk')
+    // Unsaved session views outrank gaps (and the fresh band closes hero's gap).
+    stores.setSession({ views: new Map([['hero', [390, 800]]]) })
+    await tick()
+    expect(text('.plates-line')).toContain('2 skeletons · 2 views unsaved · 3 plates on disk')
+    // A page with no skeletons reads as words, not a zero.
+    stores.setSession({ views: new Map() })
+    stores.setSites({})
+    await tick()
+    expect(text('.plates-line')).toContain('no skeletons · 3 plates on disk')
+  })
 
-    const button = actionButton()
-    button.click()
-    expect(captureAllViews).toHaveBeenCalledTimes(1)
-    // Re-query: render() rebuilds the panel on each state change.
-    expect(shadow().querySelector<HTMLButtonElement>('.action')?.disabled).toBe(true)
-    expect(shadow().querySelector<HTMLButtonElement>('.action')?.textContent).toBe(
-      'Capturing all views…',
+  it('suppresses gaps before anything is captured (the card explains instead)', async () => {
+    const stores = makeHook()
+    stores.setSites({ hero: {}, card: {} })
+    await installWith(stores)
+    expect(text('.plates-line')).toContain('2 skeletons')
+    expect(text('.plates-line')).not.toContain('gap')
+  })
+})
+
+describe('stitch rows', () => {
+  it('a stitch-only plate stays listed: dim row, host note, keys disabled with reasons', async () => {
+    const stores = await standardScene()
+    // hero light-boxed and rendering content-cards as its stitch.
+    stores.setMode({ action: 'lightbox', scope: new Set(['hero']) })
+    stores.setSites({
+      hero: {},
+      card: {},
+      'content-cards': { instances: 0, stitchedUnder: ['hero'] },
+    })
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    const row = [...shadow().querySelectorAll('.plate')].find(
+      (p) => p.querySelector('.name')?.textContent === 'content-cards',
     )
-
-    sweep.resolve()
-    await vi.waitFor(() => {
-      expect(shadow().querySelector('.status')?.textContent).toBe('Done — coverage updated.')
-    })
-    expect(shadow().querySelector<HTMLButtonElement>('.action')?.disabled).toBe(false)
-  })
-
-  it('shows a failure status with the error message when the sweep rejects', async () => {
-    const captureAllViews = vi.fn(() => Promise.reject(new Error('debugger detach')))
-    installHook({ captureAllViews })
-    hud = installXrayHud()
-    sendHello()
-
-    actionButton().click()
-    await vi.waitFor(() => {
-      expect(shadow().querySelector('.status')?.textContent).toBe('Failed: debugger detach')
-    })
-    // Button re-enabled so the user can retry.
-    expect(shadow().querySelector<HTMLButtonElement>('.action')?.disabled).toBe(false)
-  })
-
-  it('ignores a second click while a sweep is already in flight', async () => {
-    const sweep = deferred()
-    const captureAllViews = vi.fn(() => sweep.promise)
-    installHook({ captureAllViews })
-    hud = installXrayHud()
-    sendHello()
-
-    actionButton().click()
-    expect(captureAllViews).toHaveBeenCalledTimes(1)
-
-    // After the first click, render() rebuilt the button with `disabled = true`,
-    // and happy-dom (like a real browser) drops BOTH `.click()` and a dispatched
-    // click on a disabled button. So a second `.click()` would prove the DOM's
-    // disabled behavior, NOT the `if (sweeping) return` guard — the handler never
-    // even runs. To genuinely RE-ENTER `startSweep` while the sweep is still in
-    // flight, re-enable the button (bypassing only the DOM gate) and dispatch a
-    // click: the SAME path the button triggers (`void startSweep()`) now runs a
-    // second time with `sweeping` still true. Only the `sweeping` guard can keep
-    // `captureAllViews` at one call; delete it and the handler calls it twice.
-    const reentered = actionButton()
-    assert(reentered.disabled, 'the button should be disabled mid-sweep')
-    reentered.disabled = false
-    reentered.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect(captureAllViews).toHaveBeenCalledTimes(1)
-
-    sweep.resolve()
-    await vi.waitFor(() => {
-      expect(shadow().querySelector('.status')?.textContent).toContain('Done')
-    })
+    assert(row)
+    expect(row.className).toContain('stitch')
+    expect(row.textContent).toContain('↳ stitch of hero')
+    for (const key of row.querySelectorAll('.key')) {
+      assert(key instanceof HTMLButtonElement)
+      expect(key.disabled).toBe(true)
+    }
+    expect(row.querySelector('.key[title*="light box hero off"]')).toBeTruthy()
   })
 })
 
-describe('installXrayHud toggle rows', () => {
-  it('renders Capture and Light Box checkboxes reflecting the stores', () => {
-    installHook({ capture: makeToggle(true), lightbox: makeToggle(false) })
-    hud = installXrayHud()
-    const labels = [...shadow().querySelectorAll('.toggle')]
-    const texts = labels.map((l) => l.textContent)
-    expect(texts).toEqual(['Capture', 'Light Box'])
-    const boxes = shadow().querySelectorAll<HTMLInputElement>('.toggle input')
-    expect(boxes.item(0).checked).toBe(true)
-    expect(boxes.item(1).checked).toBe(false)
+describe('an engaged Light Box never strands', () => {
+  it('the global play stays enabled to disengage after every plate unmounts', async () => {
+    const stores = await standardScene()
+    stores.setMode({ action: 'lightbox', scope: 'global' })
+    stores.setSites({})
+    await tick()
+    expect(qButton('.ctl.play').disabled).toBe(false)
+    click(qButton('.ctl.play'))
+    expect(stores.mode.setLightbox).toHaveBeenCalledWith(false)
   })
 
-  it('the Capture checkbox writes the capture store on change', () => {
-    const capture = makeToggle(false)
-    installHook({ capture })
-    hud = installXrayHud()
-    const box = shadow().querySelectorAll<HTMLInputElement>('.toggle input').item(0)
-    box.checked = true
-    box.dispatchEvent(new Event('change'))
-    expect(capture.get()).toBe(true)
-  })
-
-  it('the Light Box checkbox writes the lightbox store on change', () => {
-    const lightbox = makeToggle(false)
-    // No capture toggle, so Light Box is the only row.
-    installHook({ capture: undefined, lightbox })
-    hud = installXrayHud()
-    const box = shadow().querySelector<HTMLInputElement>('.toggle input')!
-    box.checked = true
-    box.dispatchEvent(new Event('change'))
-    expect(lightbox.get()).toBe(true)
+  it('a scoped plate that unmounts keeps a dimmed row with its lit key', async () => {
+    const stores = await standardScene()
+    stores.setMode({ action: 'lightbox', scope: new Set(['hero']) })
+    stores.setSites({ card: {} })
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    const heroRow = [...shadow().querySelectorAll('.plate')].find(
+      (p) => p.querySelector('.name')?.textContent === 'hero',
+    )
+    assert(heroRow)
+    expect(heroRow.className).toContain('unmounted')
+    const key = heroRow.querySelector('.key.on-play')
+    assert(key instanceof HTMLButtonElement)
+    expect(key.disabled).toBe(false)
+    click(key)
+    expect(stores.mode.lightboxName).toHaveBeenCalledWith('hero', false)
   })
 })
 
-describe('installXrayHud dispose', () => {
-  it('removes the host and stops reacting to coverage and messages', () => {
-    const coverage = makeCoverage()
-    installHook({ coverage })
-    hud = installXrayHud()
-    expect(document.querySelector('[data-xray-hud]')).not.toBeNull()
-    hud.dispose()
-    hud = undefined
+describe('dispose', () => {
+  it('removes the host and stops reacting to store changes', async () => {
+    const stores = await standardScene()
+    handle?.dispose()
+    handle = undefined
     expect(document.querySelector('[data-xray-hud]')).toBeNull()
-    // A late hello must not throw now that the listener is gone.
-    expect(() => sendHello()).not.toThrow()
-    // A coverage change has no panel to update.
-    expect(() => coverage.set('late', { breakpoints: [], spans: [] })).not.toThrow()
+    // A post-dispose notify must not throw (subscriptions were cleaned up).
+    stores.setSession({ save: 'saved', savedCount: 1 })
+    await tick()
   })
 })

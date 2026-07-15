@@ -1,17 +1,37 @@
-// Dev-bridge content script — the extension's only surface (ADR 0010). The page
-// (the xray HUD) is the controller; this is a two-way relay plus a presence
-// beacon. It announces the extension to the page, answers `whois`, and forwards
-// the page's emulate/reset commands to the background, acking each by id.
+// Dev-bridge content script — the extension's only page surface (ADR 0010, protocol v2 in ADR
+// 0030). The page (the xray dev client) is the controller; this is a two-way relay plus a
+// presence beacon. It announces the extension (version + capabilities), answers `whois`, and
+// forwards the page's commands to the background, acking each by id.
 //
-// Note: this injects only on matched origins (dev hosts). An unmatched dev host
-// won't get the extension, and the HUD will show its "install" promo even when
-// it's installed — broaden the matches to cover your dev origins.
-const VERSION = '0.0.0'
+// It AUTO-injects only on dev loopback origins (localhost, 127.0.0.1, *.localhost). Any other
+// origin — tunnels, LAN hosts, custom dev domains — gets the SAME script injected by the toolbar
+// action's explicit per-tab click (background.ts), which is why the double-injection guard below
+// must make a second run a no-op.
+
+import { BRIDGE_CAPS } from '../utils/protocol'
+
+declare global {
+  interface Window {
+    xrayBridgeInstalled?: boolean
+  }
+}
 
 type PageMessage = { source?: string; kind?: string; id?: number }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function announce(): void {
+  window.postMessage(
+    {
+      source: 'xray-ext',
+      kind: 'hello',
+      version: browser.runtime.getManifest().version,
+      caps: [...BRIDGE_CAPS],
+    },
+    '*',
+  )
 }
 
 function isPageMessage(value: unknown): value is PageMessage {
@@ -24,10 +44,19 @@ function isPageMessage(value: unknown): value is PageMessage {
 }
 
 export default defineContentScript({
-  matches: ['http://localhost/*', 'http://127.0.0.1/*'],
+  matches: [
+    'http://localhost/*',
+    'https://localhost/*',
+    'http://127.0.0.1/*',
+    'https://127.0.0.1/*',
+    'http://*.localhost/*',
+    'https://*.localhost/*',
+  ],
   main() {
-    const announce = () =>
-      window.postMessage({ source: 'xray-ext', kind: 'hello', version: VERSION }, '*')
+    // The toolbar action injects this same script on click; a repeat run must be
+    // a no-op or the page would receive duplicate ACKs for every command.
+    if (window.xrayBridgeInstalled) return
+    window.xrayBridgeInstalled = true
 
     window.addEventListener('message', (event) => {
       if (event.source !== window) return
@@ -37,7 +66,7 @@ export default defineContentScript({
         announce()
         return
       }
-      if (message.kind === 'emulate' || message.kind === 'reset') {
+      if (message.kind === 'emulate' || message.kind === 'reset' || message.kind === 'cdp') {
         void browser.runtime.sendMessage(message).then(
           (result: unknown) => {
             const details = isRecord(result)
@@ -60,7 +89,8 @@ export default defineContentScript({
       }
     })
 
-    // Proactively, in case the page's HUD mounted before this script loaded.
+    // Proactively, in case the page's client installed before this script loaded
+    // (or the user just clicked the action on an already-loaded page).
     announce()
   },
 })

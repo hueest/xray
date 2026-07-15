@@ -1,6 +1,6 @@
 {
   "name": "@hueest/xray",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Auto-captured skeleton loading screens for Vite — capture the structure, ship the plate.",
   "keywords": [
     "loading",
@@ -71,6 +71,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/core": "0.18.5",
+    "@solidjs/web": "2.0.0-beta.17",
     "@types/node": "25.9.3",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
@@ -79,9 +80,11 @@
     "publint": "0.3.21",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "tsdown": "0.22.5",
+    "solid-js": "2.0.0-beta.17",
+    "tsdown": "0.22.7",
     "typescript": "6.0.3",
     "vite": "8.1.4",
+    "vite-plugin-solid": "3.0.0-next.7",
     "vitest": "4.1.10"
   },
   "peerDependencies": {

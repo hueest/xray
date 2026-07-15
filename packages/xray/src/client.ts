@@ -2,14 +2,22 @@ import { parse as devalueParse, stringify as devalueStringify } from 'devalue'
 import { deriveBreakpoints, viewSpanFor } from './breakpoints.ts'
 import { serializePlate } from './chunk.ts'
 import { blinkCapture } from './blink.ts'
+import { createHighlighter } from './highlight.ts'
 import type {
   CoverageStore,
+  ExtensionStore,
   FixtureStore,
+  ModeStore,
+  MountedPlate,
   Plate,
   PlateCoverage,
   PlateStore,
+  SessionSnapshot,
+  SessionStore,
+  SitesStore,
   StoredPlate,
   ToggleStore,
+  XrayModeState,
 } from './plate.ts'
 import {
   captureView,
@@ -19,7 +27,7 @@ import {
 } from './measure.ts'
 import { distilPlate } from './measure.ts'
 import { serializePlateIR } from './serialize.ts'
-import { emit, type PlateIR, type ViewIR } from './ir.ts'
+import { emit, irFromTree, type PlateIR, type ViewIR } from './ir.ts'
 import {
   type CaptureDiagnostic,
   diagnosticsHeader,
@@ -130,19 +138,6 @@ interface Site {
    * defaults apply.
    */
   collect?: CollectLimits
-  /**
-   * The serialized `StoredPlate` last sent for this site — a per-PLATE dedupe (the client posts one
-   * finished StoredPlate per browse/sweep). An identical re-projection skips the POST; a failed
-   * send clears it so a retry re-sends. Undefined until the first send.
-   */
-  lastSent?: string
-  /**
-   * The per-session, per-site `PlateIR` the capture-all sweep accumulates Views into (ADR 0022 §2):
-   * one bundle threaded through every emulated width, projected to ONE StoredPlate at the end of
-   * the sweep. Undefined outside a sweep (browse captures build a fresh local 1-View IR each time).
-   * Reset at the start of every sweep so a prior sweep's Views never leak into a new one.
-   */
-  sessionPlate?: PlateIR
   disposed: boolean
   /** Set once a capture came back over the node limit — stop re-attempting it. */
   tooLarge: boolean
@@ -167,6 +162,24 @@ interface ExtensionAck {
   id: number
   ok?: boolean
   error?: string
+}
+
+interface ExtensionHello {
+  source: 'xray-ext'
+  kind: 'hello'
+  version?: unknown
+  caps?: unknown
+}
+
+function isExtensionHello(value: unknown): value is ExtensionHello {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'source' in value &&
+    value.source === 'xray-ext' &&
+    'kind' in value &&
+    value.kind === 'hello'
+  )
 }
 
 function isExtensionAck(value: unknown): value is ExtensionAck {
@@ -242,10 +255,13 @@ export function installXrayClient(options: ClientOptions): () => void {
   // has `site.disposed`; this adds the width/uninstall cases.
   let captureGeneration = 0
 
-  // True while a capture-all sweep is collecting Views. A FORCED capture during a
-  // sweep splices its (guarded) View into the site's per-session `PlateIR` instead
-  // of posting immediately; the whole bundle posts ONCE at the end of the sweep.
+  // True while a sweep is visiting widths. Browse captures are dropped while it
+  // runs (the sweep owns the one shared viewport and captures deliberately).
   let sweeping = false
+  // Disengaging mid-sweep aborts the remaining widths at the next boundary: the
+  // stop already wrote the session, so further forced captures would only strand
+  // Views in cleared buffers. Reset still posts in the sweep's finally.
+  let sweepAbort = false
 
   // Freshest plate per name, hot-swapped in place when a capture lands (the
   // plugin sends it over a custom HMR event). `<Skeleton>` reads through this
@@ -286,7 +302,15 @@ export function installXrayClient(options: ClientOptions): () => void {
     if (plateSerialized.get(name) === json) return false
     plateSerialized.set(name, json)
     livePlates.set(name, plate)
-    for (const cb of plateListeners.get(name) ?? []) cb()
+    // Same listener isolation as createNotifier: plate updates fire from the
+    // capture path, and a throwing subscriber must not break it.
+    for (const cb of plateListeners.get(name) ?? []) {
+      try {
+        cb()
+      } catch (error) {
+        console.error('[xray] a plate subscriber threw (ignored):', error)
+      }
+    }
     return true
   }
 
@@ -327,6 +351,16 @@ export function installXrayClient(options: ClientOptions): () => void {
   const replayMode: 'prefer' | 'missing-only' =
     options.replay === 'missing-only' ? 'missing-only' : 'prefer'
   const recordMode = options.record ?? 'manual'
+
+  // Name-scoped mode state (the ModeStore below). The sticky ToggleStores above stay
+  // the GLOBAL-scope source of truth (per-tab persistence, `?xray-*` URL seeds, console
+  // flips); these sets carry the per-plate scopes, which are deliberately ephemeral.
+  // One action at a time: the ModeStore's setters enforce that engaging record blocks
+  // Light Box at every scope and vice versa.
+  const recordNames = new Set<string>()
+  const lightboxNames = new Set<string>()
+  /** Whether the active record mode covers this plate name (browse captures gate on it). */
+  const recordingCovers = (name: string): boolean => captureEnabled.get() || recordNames.has(name)
 
   // Several <Skeleton> of the same plate can be mounted at once (e.g. one
   // ContentCards per offering). Only one may WRITE the plate or they race and
@@ -377,7 +411,16 @@ export function installXrayClient(options: ClientOptions): () => void {
       return undefined
     }
     const roots = rootsFor(site)
-    if (roots.length === 0) return undefined
+    // MOUNTED BUT RENDERING NOTHING (ADR 0029): the boundary is on the page and
+    // its content rendered null at this width (a component that returns nothing
+    // below its breakpoint). That is an observation, not a failure — record an
+    // EMPTY View so the band reads as captured emptiness (the skeleton renders
+    // the faithful nothing there) instead of a gap no re-capture can fill. The
+    // sweep's captured-absence pass covers the UNMOUNTED case; this covers the
+    // mounted-empty one. Every post-settle guard above has already passed.
+    if (roots.length === 0) {
+      return { width: win.innerWidth, bundle: irFromTree({ id: 0, kids: [] }), bpSeed: [] }
+    }
     let local: PlateIR
     try {
       // A MANUAL root IS this plate's own boundary, so the stitch guard is skipped
@@ -400,13 +443,19 @@ export function installXrayClient(options: ClientOptions): () => void {
         // shared formatter render it (diagnostics.ts), so browser and server
         // text never drift.
         site.tooLarge = true
-        reportDiagnostics(site.name, [
+        notifySites()
+        const refusal = [
           makeDiagnostic(error.code, {
             detail:
               `${error.axis} ${error.size[error.axis]} over the ${error.axis} limit ${error.max} ` +
               `(nodes ${error.size.nodes}, breadth ${error.size.breadth}, depth ${error.size.depth})`,
           }),
-        ])
+        ]
+        reportDiagnostics(site.name, refusal)
+        setDiagnostics(
+          site.name,
+          refusal.map((d) => formatDiagnostic(d)),
+        )
         return undefined
       }
       console.warn('[xray] capture failed for', site.name, error)
@@ -414,11 +463,16 @@ export function installXrayClient(options: ClientOptions): () => void {
     }
     const view = local.views[0]
     if (!view) return undefined
-    // Surface this View's dev-only capture diagnostics to the browser console.
+    // Surface this View's dev-only capture diagnostics to the browser console AND
+    // the per-plate diagnostics store (the HUD row notes; empty = clean capture).
     // They ride to the server in the POST envelope's SIBLING `diagnostics` field,
     // never into the StoredPlate — so the committed plate stays byte-identical to
     // a no-diagnostics capture (ADR 0008). The client logs them; it never persists.
     reportDiagnostics(site.name, view.diagnostics)
+    setDiagnostics(
+      site.name,
+      (view.diagnostics ?? []).map((d) => formatDiagnostic(d)),
+    )
     // RE-CHECK the generation guard AFTER measuring: `captureView` is synchronous
     // (the only async point was the settle above, already guarded), so this is
     // belt-and-suspenders — but it is the gate that lets a sweep DISCARD a View
@@ -427,13 +481,36 @@ export function installXrayClient(options: ClientOptions): () => void {
     return view
   }
 
-  // ── Manual capture session (the Capture toggle) ──────────────────────────────
-  // The Capture toggle is a SESSION switch: while ON, browse captures (navigation,
-  // resize, interaction) ACCUMULATE here — keyed by plate NAME so a buffer survives the
-  // site unmounting as you navigate — and nothing is written to disk until you toggle
-  // OFF (`finalizeSession`). The extension capture-all sweep is a separate path (it
-  // owns `site.sessionPlate` and posts at `finalizeSessionPlate`).
+  // ── The recording session (ONE accumulate path) ─────────────────────────────
+  // Recording is a SESSION: while engaged, every capture — browse (navigation,
+  // resize, interaction) AND the extension sweep's forced emulated-width passes —
+  // ACCUMULATES here, keyed by plate NAME so a buffer survives the site unmounting
+  // as you navigate, and nothing is written to disk until the session (or one
+  // name's slice of it) stops. The sweep is an AMPLIFIER of the same session, not
+  // a separate path: with the extension connected, engaging record first sweeps
+  // every derived width into these buffers, then keeps accumulating as you browse.
   const sessionBuffers = new Map<string, PlateIR>()
+
+  // The session store's mutable snapshot (the HUD ticker/progress source). Views
+  // per name mirror the buffers; `save` tracks the LAST stop's write lifecycle;
+  // `sweep` is set per emulated width while a sweep pass runs.
+  const sessionNotifier = createNotifier()
+  let sessionSnapshot: SessionSnapshot = { views: new Map(), save: 'idle', savedCount: 0 }
+  const notifySession = (patch: Partial<SessionSnapshot>): void => {
+    const views = new Map<string, readonly number[]>()
+    for (const [name, buf] of sessionBuffers) {
+      views.set(
+        name,
+        buf.views.map((v) => v.width).toSorted((a, b) => a - b),
+      )
+    }
+    sessionSnapshot = { ...sessionSnapshot, ...patch, views }
+    sessionNotifier.notify()
+  }
+  const session: SessionStore = {
+    get: () => sessionSnapshot,
+    subscribe: sessionNotifier.subscribe,
+  }
 
   // Breakpoints for a session buffer: each View's pre-Distil seed unioned with the
   // JS matchMedia thresholds (derived RAW so a distilled View never loses a boundary).
@@ -480,13 +557,21 @@ export function installXrayClient(options: ClientOptions): () => void {
   }
 
   // Stop: write each recorded plate to disk ONCE (the session's only disk write), then
-  // clear. Replace semantics — the Views you recorded become the plate.
-  const finalizeSession = async (): Promise<void> => {
-    // Snapshot + clear up front so a straggler capture can't mutate a buffer mid-write;
-    // a FAILED write re-inserts its buffer so the buffered captures survive in memory for a
-    // retry (a later stop, or teardown) rather than being lost to a single warn.
-    const entries = [...sessionBuffers]
-    sessionBuffers.clear()
+  // clear. Replace semantics — the Views you recorded become the plate. `names` narrows
+  // the write to one slice of the session (a per-plate record key toggling off); absent
+  // writes everything (the global stop). The save lifecycle rides the session store:
+  // `writing` while the sink settles, then `saved` or `failed` — a FAILED write
+  // re-inserts its buffer so the Views survive in memory for a retry (the next engage,
+  // a later stop, or teardown) rather than being lost to a single warn.
+  const finalizeSession = async (names?: ReadonlySet<string>): Promise<void> => {
+    // Snapshot + remove up front so a straggler capture can't mutate a buffer mid-write.
+    const entries = [...sessionBuffers].filter(([name]) => !names || names.has(name))
+    if (entries.length === 0) return
+    for (const [name] of entries) sessionBuffers.delete(name)
+    notifySession({ save: 'writing' })
+    let failed = 0
+    let saved = 0
+    let saveError: string | undefined
     await Promise.all(
       entries.map(async ([name, buf]) => {
         const stored = projectSessionBuffer(buf)
@@ -498,7 +583,10 @@ export function installXrayClient(options: ClientOptions): () => void {
         }
         try {
           await options.sink(envelope)
+          saved += 1
         } catch (error) {
+          failed += 1
+          saveError = error instanceof Error ? error.message : String(error)
           if (!sessionBuffers.has(name)) sessionBuffers.set(name, buf)
           console.warn(
             `[xray] capture-session write failed for "${name}" — kept in memory; retried when you next start a session`,
@@ -507,55 +595,50 @@ export function installXrayClient(options: ClientOptions): () => void {
         }
       }),
     )
+    notifySession({ save: failed > 0 ? 'failed' : 'saved', savedCount: saved, saveError })
   }
 
-  // ONE settle+measure+(splice|accumulate) for a site. `force` bypasses the browse-time
-  // capture toggle (used by the sweep, which captures regardless of the toggle). The
-  // sweep accumulates Views into `site.sessionPlate` here (no POST) and the single
-  // per-session POST is awaited in `finalizeSessionPlate`; a browse capture accumulates
-  // into the session buffer (no POST) and is written at stop in `finalizeSession`.
-  // Coalescing of overlapping triggers lives in `scheduleCapture`; this runs the actual
-  // work and is never invoked twice in parallel for one site.
+  // ONE settle+measure+accumulate for a site — the session's single ingest path.
+  // `force` marks a sweep pass: it bypasses the recording-scope gate (the sweep owns
+  // what it captures) but lands its View in the SAME name-keyed session buffer a
+  // browse capture does. No capture ever POSTs from here; the write happens at stop
+  // (`finalizeSession`). Coalescing of overlapping triggers lives in
+  // `scheduleCapture`; this runs the actual work and is never invoked twice in
+  // parallel for one site.
   const runCapture = async (site: Site, force: boolean) => {
-    // During a capture-all sweep the sweep OWNS capture: it emulates each width and
-    // captures it with a forced, awaited pass. A non-forced (browse) capture here is
-    // a stray — almost always one the sweep's own emulated resize spawned via
-    // `onResize` — and running it would race the sweep's awaited captures, splicing a
-    // duplicate or mid-transition View into the session bundle (or churning the
-    // generation guard). Drop it; the sweep already covers this site at every width.
-    if ((!force && (!captureEnabled.get() || sweeping)) || site.tooLarge || !isPrimaryForName(site))
+    // During a sweep the sweep OWNS capture: it emulates each width and captures it
+    // with a forced, awaited pass. A non-forced (browse) capture here is a stray —
+    // almost always one the sweep's own emulated resize spawned via `onResize` — and
+    // running it would race the sweep's awaited captures, splicing a duplicate or
+    // mid-transition View into the buffer (or churning the generation guard). Drop
+    // it; the sweep already covers this site at every width.
+    if (
+      (!force && (!recordingCovers(site.name) || sweeping)) ||
+      site.tooLarge ||
+      !isPrimaryForName(site)
+    ) {
       return
+    }
     // Snapshot the generation BEFORE settling: any width-change/disposal/uninstall
     // that lands during the settle moves it, and the capture is discarded rather
     // than written/spliced under the stale viewport (the generation guard).
     const generation = captureGeneration
     const view = await captureLocalView(site, generation)
     if (!view) return
-    // SWEEP accumulation: while a capture-all sweep is collecting, a FORCED capture
-    // splices the survivor into the per-session shared bundle (lazily created so a
-    // site mounted mid-sweep still accumulates). ONLY reached when the guard still
-    // held in `captureLocalView`, so a stale (width-changed/disposed) View was
-    // already discarded and never corrupts the bundle. No POST here — the whole
-    // bundle posts once in `finalizeSessionPlate` at the end of the sweep.
-    if (sweeping && force) {
-      const session = (site.sessionPlate ??= { name: site.name, views: [], breakpoints: [] })
-      session.views.push(view)
-      return
-    }
-    // SESSION: the Capture toggle is a capture SESSION, not a per-capture overwrite.
-    // Accumulate this View into the name-keyed buffer (name-keyed so it survives the
-    // site unmounting as you navigate), and DEFER the disk write to stop (toggle off →
-    // `finalizeSession`). Seed the breakpoint thresholds from the RAW rules BEFORE
-    // distilling (a post-Distil derivation could lose a dropped node's `@media`
-    // boundary), then distil this View once so projection stays a pure Serialize.
-    // Dedup by exact width here (latest wins); the per-band collapse happens at
-    // projection. `previewSession` hot-swaps the in-memory plate so a shown skeleton
-    // (Light Box / still-loading site) reflects the View just recorded — no POST.
-    // Re-check the toggle AFTER the settle — the one invalidation the generation guard
-    // does not cover. If the session was stopped while this View settled, the session was
-    // already finalized and the buffer cleared; accumulating now would orphan this View
-    // in a fresh buffer nothing flushes. Drop it (toggling on starts a new session).
-    if (!captureEnabled.get()) return
+    // Re-check the scope AFTER the settle — the one invalidation the generation
+    // guard does not cover. If the session (or this name's slice) was stopped while
+    // this View settled, the buffer was already finalized and cleared; accumulating
+    // now would orphan this View in a fresh buffer nothing flushes. Drop it — the
+    // sweep's forced captures included: every sweep runs inside an engaged session
+    // now, so a forced View arriving after the stop is exactly as orphaned.
+    if (!recordingCovers(site.name)) return
+    // Seed the breakpoint thresholds from the RAW rules BEFORE distilling (a
+    // post-Distil derivation could lose a dropped node's `@media` boundary), then
+    // distil this View once so projection stays a pure Serialize (the passes are
+    // strictly per-View, so distil-at-capture equals the old distil-at-sweep-end).
+    // Dedup by exact width (latest wins); the per-band collapse happens at
+    // projection. `previewSession` hot-swaps the in-memory plate so a shown
+    // skeleton (Light Box / still-loading site) reflects the View just recorded.
     view.bpSeed = deriveBreakpoints(emit(view.bundle).rules, [])
     distilPlate({ name: site.name, views: [view], breakpoints: [] })
     let buf = sessionBuffers.get(site.name)
@@ -565,75 +648,10 @@ export function installXrayClient(options: ClientOptions): () => void {
     }
     buf.views = buf.views.filter((v) => v.width !== view.width)
     buf.views.push(view)
+    notifySession({})
     // Blink ONLY when this (re)capture changed the recorded result — feedback that
     // a resize/navigation recorded something NEW, not a no-op re-capture.
     if (previewSession(buf)) blinkCapture(site.el)
-  }
-
-  /**
-   * Project a per-site `PlateIR` to the structured `StoredPlate` IN THE BROWSER (the ADR 0022
-   * Serialize) and hand the envelope to the sink. Derives the breakpoint union ONCE over every
-   * View's rules + the recorded matchMedia queries, runs the Distil passes once over the whole
-   * bundle, then `serializePlateIR`. Dedupes per-PLATE by the serialized StoredPlate string. ALWAYS
-   * catches so neither mode leaks an unhandled rejection; on failure it clears the dedupe so a
-   * retry re-sends and, ONLY when `awaitSink`, rethrows so capture-all still fails loudly. The
-   * Blink runs only AFTER a successful send.
-   */
-  const sendPlate = async (site: Site, plate: PlateIR, awaitSink: boolean): Promise<void> => {
-    if (plate.views.length === 0) return
-    plate.name = site.name
-    // Breakpoint union over EVERY View's rules + matchMedia, once per session (a
-    // multi-View sweep covers all widths in one bundle, so the union is the whole
-    // Plate's breakpoint set).
-    // Must run BEFORE `serializePlateIR`: its multi-View gate ranges each island via
-    // `viewSpanFor(width, plate.breakpoints)`. Derive from the UN-distilled bundle on
-    // purpose: the Distil passes (Crop/Superset/glyph-fold) `dropped` nodes, and
-    // `emit` skips a dropped node's rules — so a post-Distil derivation could LOSE
-    // a breakpoint a surviving sibling still needs. Pre-Distil is a superset (a
-    // threshold from a dropped node's `@media` may linger), which only ever adds a
-    // redundant — never a missing — gate boundary; the gate stays gapless either way.
-    const rules = plate.views.flatMap((v) => emit(v.bundle).rules)
-    plate.breakpoints = deriveBreakpoints(rules, [...matchMediaQueries])
-    distilPlate(plate)
-    const stored = serializePlateIR(plate)
-    // Gather the transient per-View diagnostics for the server to log (never stored).
-    const diagnostics = plate.views.flatMap((v) => v.diagnostics ?? [])
-    const envelope: CaptureEnvelope = {
-      plate: stored,
-      ...(diagnostics.length > 0 ? { diagnostics } : {}),
-    }
-    const body = JSON.stringify(envelope)
-    // Per-PLATE dedupe: an identical re-projection skips the POST.
-    if (site.lastSent === body) return
-    site.lastSent = body
-    try {
-      // Capture-all awaits the sink (a 2xx from `/__xray`, not merely dispatched)
-      // for backpressure; browse-time does not await but is still wrapped so a
-      // rejection is handled here rather than escaping unhandled.
-      await options.sink(envelope)
-    } catch (error) {
-      // Clear the dedupe so a later capture re-sends the same StoredPlate (rather
-      // than being deduped away as already sent).
-      site.lastSent = undefined
-      if (awaitSink) throw error
-      console.warn('[xray] capture send failed for', site.name, error)
-      return
-    }
-    // The Blink over the just-captured element.
-    blinkCapture(site.el)
-  }
-
-  /**
-   * Finalize a site's accumulated sweep `PlateIR` and POST it ONCE (awaited, the backpressure
-   * point). Clears `site.sessionPlate` first so any straggler capture for the site falls back to
-   * the browse path rather than mutating the bundle mid-flight. A session that captured no
-   * surviving View posts nothing.
-   */
-  const finalizeSessionPlate = async (site: Site): Promise<void> => {
-    const session = site.sessionPlate
-    site.sessionPlate = undefined
-    if (!session || session.views.length === 0) return
-    await sendPlate(site, session, true)
   }
 
   // Coalescing scheduler (ADR 0025). At most one capture
@@ -708,52 +726,110 @@ export function installXrayClient(options: ClientOptions): () => void {
       // coalesce in the scheduler (one follow-up at the latest width), so no
       // generation bump is needed: a browse capture settling at the old width simply
       // re-dedupes or is superseded by the follow-up. The generation guard is
-      // reserved for the sweep's EMULATED width changes (see captureAllViews).
+      // reserved for the sweep's EMULATED width changes (see runSweep).
       if (sweeping) return
       for (const site of sites) void scheduleCapture(site)
+      // A browse resize IS a width visit (ADR 0029): observe it through the same
+      // engine the sweep uses, so a JS-conditional Skeleton that unmounted on
+      // the crossing records the same empty View automation would record.
+      if (recordActive()) observeWidth(win.innerWidth, recordingCovers)
     }, RESIZE_DEBOUNCE)
   }
   win.addEventListener('resize', onResize)
 
-  // The Capture toggle is the session switch. Turning it ON starts a fresh session
-  // (clear any prior buffer) and captures everything currently mounted — flip it on and
-  // the on-screen skeletons start filling in, no reload. Turning it OFF STOPS the
-  // session and writes every accumulated plate to disk once (`finalizeSession`).
-  // While on, captures accumulate + live-preview (runCapture's record branch); nothing
-  // hits disk until you stop.
+  // The global record engage/stop, driven by the sticky Capture toggle (the ModeStore's
+  // `setRecord` flips the toggle; a console `capture.set(true)` lands here identically).
+  // Engaging starts a fresh session — a prior stop's FAILED buffers get retried first
+  // (`finalizeSession` snapshots + clears up front, normally a no-op), every mounted
+  // site is captured at the current width, and, when the connected extension can
+  // emulate, the sweep fires as part of the engage: recording with the extension IS
+  // sweeping. Stopping writes every accumulated plate to disk once. `lastStop` is the
+  // in-flight stop write, awaited by `setRecord(false)` so the HUD's save states track
+  // the real sink round-trip.
   let sessionOn = captureEnabled.get()
+  let lastStop: Promise<void> = Promise.resolve()
+  // Bumped on every engage: a sweep's auto-stop callback only fires for the
+  // session that started it (a stop→re-engage while the old sweep unwinds must
+  // never let the stale callback stop the new session).
+  let engageToken = 0
   const unsubscribeCapture = captureEnabled.subscribe(() => {
     const on = captureEnabled.get()
     if (on === sessionOn) return
     sessionOn = on
     if (on) {
-      // Start a fresh session. `finalizeSession` snapshots + clears the map up front,
-      // so this also RETRIES any buffer a prior stop left behind on a failed write
-      // (normally the map is empty here, making it a no-op); fresh captures then
-      // populate the cleared map.
-      void finalizeSession()
+      // Global scope absorbs any per-name record scope.
+      recordNames.clear()
+      lastStop = finalizeSession()
+      notifySession({ sweepError: undefined })
+      // A fresh session observes from a clean slate (prior pages' evidence is
+      // stale), starting with the engage width itself.
+      resetObservations()
+      observeWidth(win.innerWidth, recordingCovers)
       for (const site of sites) void scheduleCapture(site)
+      if (extension.get().caps.includes('emulate')) {
+        // FULL AUTOMATION (ADR 0027 §2): automated visits have a knowable end, so
+        // on success the automation presses the SAME stop the user would — the
+        // write happens through the one write path. Failure never auto-writes:
+        // the session stays engaged with the error surfaced, and the user
+        // decides (fix and re-engage, or stop and keep the partial).
+        const token = ++engageToken
+        void runSweep().then(
+          () => {
+            if (engageToken === token && captureEnabled.get()) captureEnabled.set(false)
+          },
+          (error: unknown) => {
+            notifySession({ sweepError: error instanceof Error ? error.message : String(error) })
+          },
+        )
+      }
     } else {
-      void finalizeSession()
+      if (sweeping) sweepAbort = true
+      lastStop = finalizeSession()
     }
+    notifyMode()
   })
 
-  // Capture-all-views (ADR 0010): the page is the controller. It drives a thin
-  // browser extension over window.postMessage (relayed by the extension's content
-  // script) to emulate each target width, captures every mounted site at that
-  // width with a real settle, then resets. The extension only runs
-  // chrome.debugger emulate/reset — all orchestration lives here.
+  // The sweep (ADR 0010): the page is the controller. It drives a thin browser
+  // extension over window.postMessage (relayed by the extension's content script)
+  // to emulate each target width, captures every mounted site at that width with a
+  // real settle, then resets. The extension only runs allowlisted chrome.debugger
+  // commands — all orchestration lives here.
+  //
+  // Presence and capabilities come from the content script's `hello` beacon
+  // (answered by our `whois`, and re-announced proactively when the script loads
+  // after us). `present` flips once and never back — no timeout, no false negative.
+  // The client keys PURELY on `caps`: a hello without them announces no usable
+  // capability, and the HUD shows its update warnline.
+  const extNotifier = createNotifier()
+  let extState: { present: boolean; version?: string; caps: readonly string[] } = {
+    present: false,
+    caps: [],
+  }
+  const extension: ExtensionStore = {
+    get: () => extState,
+    subscribe: extNotifier.subscribe,
+  }
   const extAcks = new Map<number, (res: { ok: boolean; error?: string }) => void>()
   let nextExtReqId = 1
   const onExtMessage = (event: MessageEvent) => {
     if (event.source !== win) return
     const data = event.data
+    if (isExtensionHello(data)) {
+      extState = {
+        present: true,
+        version: typeof data.version === 'string' ? data.version : undefined,
+        caps: Array.isArray(data.caps) ? data.caps.filter((c) => typeof c === 'string') : [],
+      }
+      extNotifier.notify()
+      return
+    }
     if (isExtensionAck(data)) {
       extAcks.get(data.id)?.({ ok: data.ok ?? false, error: data.error })
       extAcks.delete(data.id)
     }
   }
   win.addEventListener('message', onExtMessage)
+  win.postMessage({ source: 'xray', kind: 'whois' }, '*')
   const extCommand = (
     kind: 'emulate' | 'reset',
     extra: Record<string, unknown> = {},
@@ -777,17 +853,14 @@ export function installXrayClient(options: ClientOptions): () => void {
   // the bootstrap: an initial fetch plus each xray:plate event. Drives the HUD's
   // band display and the capture-all width derivation.
   const coverageMap = new Map<string, PlateCoverage>()
-  const coverageListeners = new Set<() => void>()
+  const coverageNotifier = createNotifier()
   const coverage: CoverageStore = {
     get: () => coverageMap,
     set: (name, plateCoverage) => {
       coverageMap.set(name, plateCoverage)
-      for (const cb of coverageListeners) cb()
+      coverageNotifier.notify()
     },
-    subscribe: (cb) => {
-      coverageListeners.add(cb)
-      return () => coverageListeners.delete(cb)
-    },
+    subscribe: coverageNotifier.subscribe,
   }
 
   // Fixtures (ADR 0015). Two registries keyed by plate name:
@@ -810,28 +883,46 @@ export function installXrayClient(options: ClientOptions): () => void {
   // store holds decoded values, and devalue is invoked only here (dev-only).
   const liveData = new Map<string, { data: unknown }[]>()
   const recorded = new Map<string, { data: unknown }>()
-  const fixtureListeners = new Set<() => void>()
-  const notifyFixtures = () => {
-    for (const cb of fixtureListeners) cb()
-  }
+  const fixtureNotifier = createNotifier()
+  const notifyFixtures = fixtureNotifier.notify
   const fixtures: FixtureStore = {
     register: (name, data) => {
       // Push this instance's entry; the disposer removes exactly this entry (by
       // identity) on unmount, so an unmounted Skeleton's `data` never lingers and a
       // remaining mounted twin's entry stays. Last entry = most-recently-mounted.
+      // Register and dispose both notify: `status(name).participates` (and the
+      // `missing-only` replaying derivation, which reads the live value) must track
+      // mounts, not just recordings.
       const entry = { data }
       const stack = liveData.get(name)
       if (stack) stack.push(entry)
       else liveData.set(name, [entry])
+      notifyFixtures()
       return () => {
         const current = liveData.get(name)
         if (!current) return
         const i = current.indexOf(entry)
         if (i !== -1) current.splice(i, 1)
         if (current.length === 0) liveData.delete(name)
+        notifyFixtures()
       }
     },
     has: (name) => recorded.has(name),
+    status: (name) => {
+      // `participates`: a mounted render-prop Skeleton is registering live `data`
+      // right now (plain children never register — ADR 0015). `replaying`: the
+      // substitution is IN EFFECT for the next ready render — the toggle is on, a
+      // Fixture exists, and under `missing-only` the live `data` is nullish (the
+      // same `missing ≡ nullish` rule the adapter applies). A recorded plate with
+      // Replay on can therefore still render live data; this says which.
+      const live = liveData.get(name)?.at(-1)
+      const isRecorded = recorded.has(name)
+      const replaying =
+        replayEnabled.get() &&
+        isRecorded &&
+        (replayMode === 'prefer' ? true : live !== undefined && live.data == null)
+      return { participates: live !== undefined, recorded: isRecorded, replaying }
+    },
     read: (name) => recorded.get(name),
     record: async (name) => {
       const stack = liveData.get(name)
@@ -878,37 +969,35 @@ export function installXrayClient(options: ClientOptions): () => void {
       }
       if (changed) notifyFixtures()
     },
-    subscribe: (cb) => {
-      fixtureListeners.add(cb)
-      return () => fixtureListeners.delete(cb)
-    },
+    subscribe: fixtureNotifier.subscribe,
   }
+  // The Replay toggle is an input to `status(name).replaying`, so a flip must wake
+  // the fixture subscribers too (the HUD's ◆ notes re-derive).
+  const unsubscribeReplay = replayEnabled.subscribe(notifyFixtures)
 
-  // Target widths for a sweep: the union of the mounted plates' detected
-  // breakpoints (from coverage) plus any JS (matchMedia) thresholds. Visit a
-  // mobile-ish anchor inside the first band, then each threshold — one width per
-  // band the mounted skeletons actually care about.
-  const sweepWidths = (): number[] => {
-    // Width discovery is IN-SESSION, NOT from the disk plate. The breakpoints
-    // come from the matchMedia spy (JS thresholds) and the author CSS `@media`
-    // thresholds carried in the Views captured SO FAR this sweep. The per-Plate
-    // MULTI-VIEW bundle built in ONE session is the source of truth; the disk
-    // plate is a derived, geometry-stripped artifact written only at the end, so
+  // Target widths for a sweep: the union of the in-scope session buffers' seeded
+  // breakpoints plus any JS (matchMedia) thresholds. Visit a mobile-ish anchor
+  // inside the first band, then each threshold — one width per band the swept
+  // skeletons actually care about.
+  const sweepWidths = (scope?: ReadonlySet<string>): number[] => {
+    // Width discovery is IN-SESSION, NOT from the disk plate. The breakpoints come
+    // from the matchMedia spy (JS thresholds) and each buffered View's `bpSeed` —
+    // the author CSS `@media` thresholds derived from the RAW rules at capture,
+    // BEFORE Distil dropped nodes (a post-Distil `emit` could lose a boundary a
+    // dropped node carried; the seed is a superset, which only ever adds a
+    // redundant gate boundary). The session buffer built in ONE session is the
+    // source of truth; the disk plate is a derived, geometry-stripped artifact, so
     // reading widths back from it would be stale and backwards. Pass 0 captures
-    // the initial width's View, whose lifted `@media` rules reveal every band; the
-    // fixpoint then visits them (a lazy component mounting at an emulated width
-    // can still reveal a NEW breakpoint on a later pass). A CSS-only breakpoint
-    // fires no `matchMedia`, so without the captured-rule source the narrower
-    // bands would never be swept and only the initial-width View would exist,
-    // rendering at EVERY width (the off-range collapse: the widest
-    // layout shown below 1200px).
+    // the initial width's View, whose seed reveals every band; the fixpoint then
+    // visits them (a lazy component mounting at an emulated width can still reveal
+    // a NEW breakpoint on a later pass). A CSS-only breakpoint fires no
+    // `matchMedia`, so without the captured-rule source the narrower bands would
+    // never be swept and only the initial-width View would exist, rendering at
+    // EVERY width (the off-range collapse: the widest layout shown below 1200px).
     const set = new Set<number>(deriveBreakpoints([], [...matchMediaQueries]))
-    for (const site of sites) {
-      for (const view of site.sessionPlate?.views ?? []) {
-        for (const bp of deriveBreakpoints(emit(view.bundle).rules, [...matchMediaQueries])) {
-          set.add(bp)
-        }
-      }
+    for (const [name, buf] of sessionBuffers) {
+      if (scope && !scope.has(name)) continue
+      for (const view of buf.views) for (const bp of view.bpSeed ?? []) set.add(bp)
     }
     const breakpoints = [...set].toSorted((a, b) => a - b)
     const min = breakpoints[0]
@@ -924,24 +1013,23 @@ export function installXrayClient(options: ClientOptions): () => void {
   // instead of looping forever.
   const MAX_SWEEP_PASSES = 8
 
-  const captureAllViews = async (): Promise<void> => {
-    // Build ONE PlateIR per mounted site across the whole sweep (ADR 0022 §2): each
-    // emulated width appends a guarded View to the site's session bundle, and after
-    // every width is visited each site's bundle is projected to ONE StoredPlate and
-    // posted once (awaited — the backpressure point). Visit each target width once.
-    // After a pass, width-gated lazy components that just mounted may have run new
-    // matchMedia() calls (the spy records them) or had new breakpoints surfaced into
-    // the coverage store by refreshCoverage, so the next sweepWidths() can yield MORE
-    // widths. Repeat to a fixpoint: keep going while a pass discovers an unvisited
-    // width, stop once a full recompute adds nothing new.
+  /**
+   * The sweep: emulate each target width via the extension and force-capture the in-scope sites at
+   * each, every View landing in the SAME session buffers a browse capture fills (ADR 0022 §2 — one
+   * multi-View bundle per plate per session). No writes here: the surrounding engage/stop owns the
+   * disk. Progress rides the session store per width (the HUD ring). Visits each width once; after
+   * a pass, width-gated lazy components may have revealed new thresholds (fresh matchMedia calls,
+   * fresh `bpSeed`s), so recompute to a fixpoint.
+   */
+  const runSweep = async (scope?: ReadonlySet<string>): Promise<void> => {
+    const inScope = (site: Site): boolean => !scope || scope.has(site.name)
     const visited = new Set<number>()
     sweeping = true
-    // Start each currently-mounted site with a fresh session bundle so a prior
-    // sweep's Views never leak in (a site mounted mid-sweep gets one lazily).
-    for (const site of sites) site.sessionPlate = { name: site.name, views: [], breakpoints: [] }
+    sweepAbort = false
     try {
       for (let pass = 0; ; pass++) {
-        const pending = sweepWidths().filter((width) => !visited.has(width))
+        if (sweepAbort) break
+        const pending = sweepWidths(scope).filter((width) => !visited.has(width))
         if (pending.length === 0) break
         if (pass >= MAX_SWEEP_PASSES) {
           // Fail loudly rather than hang or silently truncate: the sweep keeps
@@ -952,57 +1040,358 @@ export function installXrayClient(options: ClientOptions): () => void {
               `(still discovering widths: ${pending.join(', ')})`,
           )
         }
+        const total = visited.size + pending.length
         for (const width of pending) {
+          if (sweepAbort) break
           visited.add(width)
+          notifySession({ sweep: { width, index: visited.size, total } })
           // The emulated width is about to change — bump the generation so any
           // capture still settling at the PREVIOUS width DISCARDS its local View
-          // (rather than splicing one width's geometry into the shared bundle under
-          // another's island/gate — ADR 0022 §4). The width-change is the canonical
-          // invalidation event.
+          // (rather than filing one width's geometry under another's island/gate —
+          // ADR 0022 §4). The width-change is the canonical invalidation event.
           captureGeneration++
           // Sequential by necessity: one shared viewport — emulate, capture, next.
           // eslint-disable-next-line no-await-in-loop
           await extCommand('emulate', { width, height: 2400, mobile: width < 600 })
-          // Force-capture every site into its session bundle (no per-width POST).
-          // scheduleCapture coalesces with any in-flight browse capture and resolves
-          // only once the forced follow-up has settled and spliced its View, so the
-          // next emulate never races an in-flight settle.
+          // Force-capture every in-scope site into its session buffer (no
+          // per-width POST). scheduleCapture coalesces with any in-flight browse
+          // capture and resolves only once the forced follow-up has settled and
+          // accumulated its View, so the next emulate never races a settle.
           // eslint-disable-next-line no-await-in-loop
-          await Promise.all([...sites].map((site) => scheduleCapture(site, true)))
+          await Promise.all([...sites].filter(inScope).map((site) => scheduleCapture(site, true)))
+
+          // CAPTURED ABSENCE (ADR 0029): an emulated width is a width visit like
+          // any other — run it through the SAME observation engine a manual
+          // resize uses. Absence at a width is knowledge, not a skip: unmounted
+          // names get empty Views (with backfill for a plate that first appears
+          // mid-sweep), the empties fold into one empty gated island, and
+          // coverage reads the band as captured rather than as an unfillable gap.
+          observeWidth(width, (name) => !scope || scope.has(name))
         }
         // Pull on-disk coverage back into the store BEFORE the next recompute so
-        // sweepWidths() sees the latest breakpoints deterministically. NOTE the
-        // write happens at the END of the sweep, so a fixpoint discovers new
-        // widths chiefly from this pass's captured matchMedia queries;
-        // refreshCoverage stays as the disk-truth re-pull.
+        // downstream readers see the latest breakpoints deterministically; the
+        // fixpoint itself discovers new widths from this pass's fresh seeds.
         // eslint-disable-next-line no-await-in-loop
         await options.refreshCoverage?.()
       }
-      // Sweep visited every width: project each site's accumulated bundle to ONE
-      // StoredPlate and POST it once, awaited. This single awaited write per site
-      // IS the backpressure — a non-2xx rejects the whole sweep.
-      sweeping = false
-      await Promise.all([...sites].map((site) => finalizeSessionPlate(site)))
     } finally {
-      // Clear any straggler session bundles (e.g. on an early throw) so a later
-      // browse capture for the site falls back to the immediate-POST path.
       sweeping = false
-      for (const site of sites) site.sessionPlate = undefined
+      notifySession({ sweep: undefined })
       await extCommand('reset').catch(() => undefined)
     }
   }
+
+  // ── The mode store: one action at a time, at one scope ──────────────────────
+  // The sticky global toggles stay the global-scope truth (persistence, URL seeds,
+  // console flips route through them); the name sets carry per-plate scopes. The
+  // setters enforce the exclusivity — engaging record while Light Box is active (or
+  // vice versa, at any scope) is a warned no-op — so the machine cannot be wedged
+  // from the console, and the HUD merely renders `get()`.
+  const modeNotifier = createNotifier()
+  const computeMode = (): XrayModeState => {
+    if (captureEnabled.get()) return { action: 'record', scope: 'global' }
+    if (recordNames.size > 0) return { action: 'record', scope: new Set(recordNames) }
+    if (lightbox.get()) return { action: 'lightbox', scope: 'global' }
+    if (lightboxNames.size > 0) return { action: 'lightbox', scope: new Set(lightboxNames) }
+    return { action: 'idle' }
+  }
+  // Cached so `get()` returns a STABLE snapshot between changes (useSyncExternalStore
+  // and the Solid adapters both require identity stability to not loop).
+  let modeSnapshot = computeMode()
+  const notifyMode = (): void => {
+    modeSnapshot = computeMode()
+    modeNotifier.notify()
+  }
+  const unsubscribeLightbox = lightbox.subscribe(notifyMode)
+  const recordActive = (): boolean => captureEnabled.get() || recordNames.size > 0
+  const lightboxActive = (): boolean => lightbox.get() || lightboxNames.size > 0
+  const mode: ModeStore = {
+    get: () => modeSnapshot,
+    subscribe: modeNotifier.subscribe,
+    setRecord: async (on) => {
+      if (on && lightboxActive()) {
+        warnBlocked('recording', 'Light Box')
+        return
+      }
+      captureEnabled.set(on)
+      // The toggle handler assigned `lastStop`; awaiting it gives the caller the
+      // real write round-trip (engage retries a failed stop's buffers too).
+      await lastStop
+    },
+    setLightbox: (on) => {
+      if (on && recordActive()) {
+        warnBlocked('Light Box', 'recording')
+        return
+      }
+      lightbox.set(on)
+    },
+    recordName: async (name, on) => {
+      if (captureEnabled.get() || lightboxActive()) {
+        warnBlocked('per-plate recording', captureEnabled.get() ? 'global recording' : 'Light Box')
+        return
+      }
+      if (!on) {
+        if (!recordNames.delete(name)) return
+        if (recordNames.size === 0 && sweeping) sweepAbort = true
+        notifyMode()
+        // Shrinking the scope writes the removed plate's slice of the session now.
+        await finalizeSession(new Set([name]))
+        return
+      }
+      if (recordNames.has(name)) return
+      if (sweeping) {
+        // One shared viewport: a running sweep owns it; join once it finishes.
+        warnBlocked('per-plate recording', 'a running sweep')
+        return
+      }
+      // The name joins the recording scope — the SAME lifecycle at every level
+      // of automation: captures accumulate until its key (or the whole scope)
+      // stops, and stopping writes. A fresh scope observes from a clean slate.
+      if (recordNames.size === 0) resetObservations()
+      recordNames.add(name)
+      notifyMode()
+      notifySession({ sweepError: undefined })
+      for (const site of sites) if (site.name === name) void scheduleCapture(site)
+      observeWidth(win.innerWidth, recordingCovers)
+      // FULL AUTOMATION (ADR 0027 §2), same as the global engage: the scoped
+      // sweep visits every width, then keys its names off through the same off
+      // path a finger would use — each key-off writes that plate's slice.
+      // Failure keeps the scope engaged with the error surfaced.
+      if (extension.get().caps.includes('emulate')) {
+        const swept = new Set(recordNames)
+        void runSweep(swept).then(
+          async () => {
+            for (const sweptName of swept) {
+              // eslint-disable-next-line no-await-in-loop -- key-offs are deliberate and sequential: each writes its slice through the one off path, in scope order.
+              if (recordNames.has(sweptName)) await mode.recordName(sweptName, false)
+            }
+          },
+          (error: unknown) => {
+            notifySession({ sweepError: error instanceof Error ? error.message : String(error) })
+          },
+        )
+      }
+    },
+    lightboxName: (name, on) => {
+      if (recordActive()) {
+        warnBlocked('per-plate Light Box', 'recording')
+        return
+      }
+      const changed = on ? lightboxNames.add(name) : lightboxNames.delete(name)
+      if (on || changed) notifyMode()
+    },
+    lightboxed: (name) => lightbox.get() || lightboxNames.has(name),
+  }
+
+  // ── Mounted-sites store (the HUD plate list) ────────────────────────────────
+  // PRESENCE ∪ capture sites. The adapter registers every mounted `<Skeleton>`'s
+  // name via `mounted` regardless of what it shows; capture sites exist only
+  // while the capture boundary is mounted — and Light Box unmounts that boundary
+  // by design, so a store built from capture sites alone would drop a light-boxed
+  // plate from the list along with the control that disengages it. Capture-only
+  // callers (tests, direct embedders) still appear through the union's other arm.
+  const presence = new Map<string, { el?: () => Element | null }[]>()
+  // ── The width-observation engine (ADR 0029) ────────────────────────────────
+  // Manual and sweep recording share ONE absence mechanism; the only difference
+  // is who visits the widths (your resizes vs the extension's emulation). Every
+  // visited width snapshots which names are mounted; reconciliation then gives
+  // every covered, buffered, seen-on-this-page name an EMPTY View at each
+  // observed width where it was NOT mounted — including backfill for a plate
+  // that first appears at a later width. Guards, in order of what they protect:
+  // - `seenOnPage` + pathname: session buffers survive navigation by design, so
+  //   unmounted-because-navigation must never read as absent-at-width. A page
+  //   change resets the observations and re-seeds from what is live NOW.
+  // - Mounted = PRESENCE ∪ capture sites: a Skeleton showing its loading
+  //   skeleton has presence but no capture boundary — mounted, not absent.
+  // - Buffered-only: a name never captured anywhere has no plate to complete.
+  const seenOnPage = new Set<string>()
+  const widthObservations = new Map<number, ReadonlySet<string>>()
+  let seenPath = win.location.pathname
+  const resetObservations = (): void => {
+    seenOnPage.clear()
+    widthObservations.clear()
+    seenPath = win.location.pathname
+    // Re-seed from the live registries: what is mounted right now has, by
+    // definition, been seen on the current page.
+    for (const [name, entries] of presence) if (entries.length > 0) seenOnPage.add(name)
+    for (const site of sites) {
+      if (!site.disposed && site.el.isConnected) seenOnPage.add(site.name)
+    }
+  }
+  /** True when still on the observed page; resets (and re-seeds) on navigation. */
+  const samePageOrReset = (): boolean => {
+    if (win.location.pathname === seenPath) return true
+    resetObservations()
+    return false
+  }
+  const noteSeen = (name: string): void => {
+    void samePageOrReset()
+    seenOnPage.add(name)
+  }
+  /** Snapshot the mounted names at `width`, then reconcile every covered buffer. */
+  const observeWidth = (width: number, covers: (name: string) => boolean): void => {
+    if (!samePageOrReset()) return
+    const mounted = new Set<string>()
+    for (const [name, entries] of presence) if (entries.length > 0) mounted.add(name)
+    for (const site of sites) {
+      if (!site.disposed && site.el.isConnected) mounted.add(site.name)
+    }
+    widthObservations.set(width, mounted)
+    let absent = false
+    for (const [name, buf] of sessionBuffers) {
+      if (!covers(name)) continue
+      if (!seenOnPage.has(name)) continue
+      for (const [w, mountedAtW] of widthObservations) {
+        if (mountedAtW.has(name)) continue
+        if (buf.views.some((view) => view.width === w)) continue
+        buf.views.push({ width: w, bundle: irFromTree({ id: 0, kids: [] }), bpSeed: [] })
+        absent = true
+      }
+    }
+    if (absent) notifySession({})
+  }
+  // Stitch registrations: one entry per SHOWING stitch-bearing skeleton, carrying
+  // its direct stitch names (ADR 0006). Folded into the sites snapshot as
+  // stitch-only rows / `stitchedUnder` annotations.
+  const stitchEntries = new Set<{ parent: string; names: readonly string[] }>()
+  const sitesNotifier = createNotifier()
+  let sitesSnapshot: ReadonlyMap<string, MountedPlate> = new Map()
+  const notifySites = (): void => {
+    const next = new Map<string, MountedPlate>()
+    for (const [name, entries] of presence) {
+      if (entries.length === 0) continue
+      next.set(name, { instances: entries.length, captureRoot: 'auto', tooLarge: false })
+    }
+    for (const site of sites) {
+      if (!site.el.isConnected) continue
+      const existing = next.get(site.name)
+      if (existing && presence.get(site.name)?.length) {
+        // Presence carries the instance count; capture sites contribute the
+        // capture-specific facts. tooLarge is sticky if ANY instance tripped the
+        // gate; the root model is the first registered instance's (twins share a
+        // component in practice).
+        next.set(site.name, {
+          instances: existing.instances,
+          captureRoot: site.mode,
+          tooLarge: existing.tooLarge || site.tooLarge,
+        })
+      } else if (existing) {
+        next.set(site.name, {
+          instances: existing.instances + 1,
+          captureRoot: existing.captureRoot,
+          tooLarge: existing.tooLarge || site.tooLarge,
+        })
+      } else {
+        next.set(site.name, { instances: 1, captureRoot: site.mode, tooLarge: site.tooLarge })
+      }
+    }
+    // Fold the stitch registrations in LAST: a stitched name that is also mounted
+    // keeps its real entry and gains the `stitchedUnder` hosts; a stitch-only name
+    // gets an `instances: 0` row so its on-page bones stay listed.
+    const hosts = new Map<string, string[]>()
+    for (const entry of stitchEntries) {
+      for (const name of entry.names) {
+        const list = hosts.get(name)
+        if (list) {
+          if (!list.includes(entry.parent)) list.push(entry.parent)
+        } else {
+          hosts.set(name, [entry.parent])
+        }
+      }
+    }
+    for (const [name, under] of hosts) {
+      const existing = next.get(name)
+      if (existing) next.set(name, { ...existing, stitchedUnder: under })
+      else {
+        next.set(name, { instances: 0, captureRoot: 'auto', tooLarge: false, stitchedUnder: under })
+      }
+    }
+    sitesSnapshot = next
+    sitesNotifier.notify()
+  }
+  const sitesStore: SitesStore = {
+    get: () => sitesSnapshot,
+    subscribe: sitesNotifier.subscribe,
+  }
+
+  // ── Per-plate diagnostics store (the HUD row notes) ─────────────────────────
+  // The last capture's formatted diagnostic lines per plate, replaced on every
+  // capture (empty = clean). The console keeps its grouped warning; this is the
+  // same text made subscribable.
+  const diagNotifier = createNotifier()
+  const diagLines = new Map<string, readonly string[]>()
+  const setDiagnostics = (name: string, lines: readonly string[]): void => {
+    diagLines.set(name, lines)
+    diagNotifier.notify()
+  }
+  const diagnosticsStore = {
+    get: (name: string) => diagLines.get(name) ?? [],
+    subscribe: diagNotifier.subscribe,
+  }
+
+  // The boundary highlight resolves a plate name to its WRITING instance's element
+  // (the same one a capture reads), re-resolved every frame so writer handoffs and
+  // unmounts track.
+  const highlighter = createHighlighter((name) => {
+    for (const site of sites) {
+      if (site.name === name && !site.disposed && site.el.isConnected && isPrimaryForName(site)) {
+        return site.el
+      }
+    }
+    // No capture site (the plate is light-boxed, or still loading): fall back to
+    // the presence registry's rendered root — the skeleton being shown.
+    for (const entry of presence.get(name) ?? []) {
+      const el = entry.el?.()
+      if (el?.isConnected) return el
+    }
+    // Stitch-only: the plate's bones render inside a parent's showing skeleton;
+    // the stitch root carries the standard root marker (plate names are validated
+    // to a safe charset, so direct interpolation is fine).
+    return document.querySelector(`[data-xr-root="${name}"]`) ?? undefined
+  })
 
   globalThis.__XRAY__ = {
     lightbox,
     capture: captureEnabled,
     plates,
     updatePlate,
-    captureAllViews,
     coverage,
     replay: replayEnabled,
     replayMode,
     recordMode,
     fixtures,
+    mode,
+    sites: sitesStore,
+    session,
+    diagnostics: diagnosticsStore,
+    extension,
+    highlight: highlighter.set,
+    mounted: (name, el) => {
+      const entry = { el }
+      const stack = presence.get(name)
+      if (stack) stack.push(entry)
+      else presence.set(name, [entry])
+      noteSeen(name)
+      notifySites()
+      return () => {
+        const current = presence.get(name)
+        if (!current) return
+        const i = current.indexOf(entry)
+        if (i !== -1) current.splice(i, 1)
+        if (current.length === 0) presence.delete(name)
+        notifySites()
+      }
+    },
+    stitched: (parent, names) => {
+      if (names.length === 0) return () => {}
+      const entry = { parent, names }
+      stitchEntries.add(entry)
+      notifySites()
+      return () => {
+        stitchEntries.delete(entry)
+        notifySites()
+      }
+    },
     captured: (name, el, opts) => {
       const site: Site = {
         name,
@@ -1023,10 +1412,13 @@ export function installXrayClient(options: ClientOptions): () => void {
         dirtyForce: false,
       }
       sites.add(site)
+      noteSeen(name)
+      notifySites()
       void scheduleCapture(site)
       return () => {
         site.disposed = true
         sites.delete(site)
+        notifySites()
         // A capture in-flight for THIS site is stale (the writer is gone):
         // bump the generation so it bails before its sink. The site's
         // own `disposed` flag also stops it, but the bump keeps the disposal in
@@ -1046,6 +1438,14 @@ export function installXrayClient(options: ClientOptions): () => void {
     win.removeEventListener('message', onExtMessage)
     clearTimeout(resizeTimer)
     unsubscribeCapture()
+    unsubscribeLightbox()
+    unsubscribeReplay()
+    highlighter.dispose()
+    sweepAbort = true
+    recordNames.clear()
+    lightboxNames.clear()
+    presence.clear()
+    stitchEntries.clear()
     globalThis.__XRAY__ = undefined
     // Uninstall invalidates every in-flight capture: bump the generation so one
     // still settling bails before its sink, in addition to the
@@ -1084,6 +1484,38 @@ function reportDiagnostics(
   console.warn([header, ...lines].join('\n'))
 }
 
+/**
+ * One listener set, shared by every client store (the TanStack Store lesson, minus the library):
+ * `notify` runs each subscriber in ISOLATION — the HUD is effectively a third party to the capture
+ * pipeline, and these notifications fire from inside `runCapture`, the sweep loop, and the stop's
+ * write path, so a throwing subscriber must never break the capture that happened to wake it.
+ */
+function createNotifier(): { notify: () => void; subscribe: (cb: () => void) => () => void } {
+  const listeners = new Set<() => void>()
+  return {
+    notify() {
+      for (const cb of listeners) {
+        try {
+          cb()
+        } catch (error) {
+          console.error('[xray] a store subscriber threw (ignored):', error)
+        }
+      }
+    },
+    subscribe(cb) {
+      listeners.add(cb)
+      return () => {
+        listeners.delete(cb)
+      }
+    },
+  }
+}
+
+/** The mode machine's exclusivity refusal: a warned no-op, never a wedge. */
+function warnBlocked(verb: string, blocker: string): void {
+  console.warn(`[xray] ${verb} is unavailable while ${blocker} is active — stop it first.`)
+}
+
 const LIGHTBOX_KEY = 'xray:lightbox'
 const LIGHTBOX_PARAM = 'xray-lightbox'
 const CAPTURE_KEY = 'xray:capture'
@@ -1105,7 +1537,7 @@ function createToggleStore(win: Window, key: string, param: string, initial: boo
     // storage can be unavailable (sandboxed iframes) — stay in-memory
   }
   if (new URL(win.location.href).searchParams.has(param)) value = true
-  const listeners = new Set<() => void>()
+  const notifier = createNotifier()
   return {
     get: () => value,
     set(next) {
@@ -1116,14 +1548,9 @@ function createToggleStore(win: Window, key: string, param: string, initial: boo
       } catch {
         // in-memory only
       }
-      for (const listener of listeners) listener()
+      notifier.notify()
     },
-    subscribe(onChange) {
-      listeners.add(onChange)
-      return () => {
-        listeners.delete(onChange)
-      }
-    },
+    subscribe: notifier.subscribe,
   }
 }
 

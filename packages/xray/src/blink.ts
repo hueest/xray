@@ -40,7 +40,7 @@ function ensureStyle(): void {
 }
 
 /** The element's box, or the union of its children's (a display:contents wrapper has none). */
-function boxOf(el: Element): DOMRect | null {
+export function boxOf(el: Element): DOMRect | null {
   const own = el.getBoundingClientRect()
   if (own.width > 0 && own.height > 0) return own
   let left = Infinity

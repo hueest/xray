@@ -403,6 +403,30 @@ describe('readCoverage', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('prefers STORED spans over the derived complete assumption (ADR 0029)', () => {
+    // A partial browse session captured ONE band of four; the plate says so, and
+    // coverage must repeat it instead of assuming every band complete.
+    const dir = mkdtempSync(join(tmpdir(), 'xray-covs-'))
+    try {
+      writeFileSync(
+        join(dir, 'feed.json'),
+        JSON.stringify({
+          v: PLATE_VERSION,
+          name: 'feed',
+          breakpoints: [576, 1200],
+          spans: [{ min: 1200 }],
+          tree: { kids: [{ leaf: 'box', cls: 'xr-feed-1' }] },
+          css: '',
+        }),
+      )
+      expect(readCoverage(dir)).toEqual({
+        feed: { breakpoints: [576, 1200], spans: [{ min: 1200 }] },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('handleCapturePost', () => {

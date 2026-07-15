@@ -52,13 +52,15 @@ What's next and what's deliberately deferred. How the pieces work lives in
 
 ## Deferred / known limits
 
-- **Capture-all distribution & coverage.** The dev-only extension
-  ([ADR 0010](https://github.com/hueest/xray/blob/main/docs/adr/0010-capture-all-views-via-extension.md))
-  works but loads unpacked: no Chrome Web Store package yet (a GitHub Releases
-  zip comes first, the Web Store later), its content script matches only
-  `localhost`/`127.0.0.1` (broaden for other dev origins), and tall/lazy
-  (`IntersectionObserver`) content may need a driven scroll at short emulated
-  heights.
+- **Extension distribution.** The dev bridge
+  ([ADR 0010](https://github.com/hueest/xray/blob/main/docs/adr/0010-capture-all-views-via-extension.md),
+  [ADR 0030](https://github.com/hueest/xray/blob/main/docs/adr/0030-dev-bridge-protocol.md))
+  speaks a versioned, allowlisted CDP protocol, auto-connects on dev loopback
+  origins, and activates anywhere else via the toolbar action — but it still
+  loads unpacked: a GitHub Releases zip is the next step, the Chrome Web Store
+  after. Tall/lazy (`IntersectionObserver`) content may need a driven scroll
+  at short emulated heights; `Input.*` is already within the protocol's
+  allowlist, so that ships as a package update.
 - **Bones in the Blink.** The dev capture Blink is a cyan bloom, a negative
   `invert` blink, and a scan-line sweep over the element's box. Overlaying the
   _actual captured bones_ (a true x-ray of what was captured) drifts

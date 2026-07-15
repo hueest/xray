@@ -290,8 +290,10 @@ or bone-white; offset grey drop shadows are prohibited. Corollary: the
   GitHub, the install chip, llms.txt) are all this variant.
 - **Solid (exceptional only):** solid Radiograph Steel fill, Film Black text, 12px×24px
   padding — the lit element on the page. Reserved for a single exceptionally important CTA,
-  never the default; today it appears only on illustrative product-UI bits (the HUD
-  "Capture all views", the demo's "Add to cart").
+  never the default; today it appears only on illustrative product-UI bits (the demo's
+  "Add to cart"). The HUD's own signature control is the icon-only record button — a
+  crimson-dot circle beside the steel play (Light Box) circle, the deck pair — not a
+  labeled solid button.
 - **Hover (site-wide, every button):** the edge lights to Radiograph Steel with a backlit
   outer glow, struck on with a quick **flicker** (the `xr-edge-strike` keyframe, ~200ms,
   stepped) — no transform, no 1px lift. Borderless chrome buttons (search, copy, sidebar)
@@ -305,8 +307,10 @@ or bone-white; offset grey drop shadows are prohibited. Corollary: the
 - **Style:** transparent, pill (`{rounded.full}`), Bone Muted mono label, hairline Film
   Line border.
 - **State:** coverage-style states pair color **with text and shape**, never color alone
-  — "captured" is steel label + filled dot; "missing" is muted label + hollow dot. (This
-  is the product's own HUD language and the accessibility line from PRODUCT.md.)
+  — "captured" is a steel label on a solid-bordered, steel-tinted segment; "missing" is a
+  muted label on a dashed hollow one; "fresh this session" adds the glow. (This is the
+  product's own HUD language — the joined per-band segments — and the accessibility line
+  from PRODUCT.md.)
 
 ### Cards / Containers
 

@@ -18,8 +18,8 @@ View, and the Light Box previews skeletons on demand.
 - [Home](https://xray-js.dev/): overview, how it works, install.
 - [Responsive & Views](https://xray-js.dev/guides/responsive-views/): capturing multiple width bands and carrying each View whole in the one Plate.
 - [Nested skeletons](https://xray-js.dev/guides/nested-skeletons/): Stitches — independent captures that hold the layout and reveal as one.
-- [The HUD & Light Box](https://xray-js.dev/guides/hud-light-box/): the dev overlay for coverage and previewing skeletons.
-- [Capture all views](https://xray-js.dev/guides/capture-all/): sweeping every detected width band in one click with the companion extension.
+- [The HUD & Light Box](https://xray-js.dev/guides/hud-light-box/): the dev deck — record, Light Box, Coverage, and per-plate controls.
+- [The Sweep](https://xray-js.dev/guides/sweep/): one press of record captures every detected width band via the companion extension.
 - [Fixtures](https://xray-js.dev/guides/fixtures/): recording a component's data once and replaying it for deterministic captures.
 - [Capture customization](https://xray-js.dev/guides/capture-customization/): Hints and the Walker — shape what a capture keeps, collapses, or drops.
 - [Display timing](https://xray-js.dev/guides/display-timing/): when the skeleton appears, how long it stays, and how it swaps.

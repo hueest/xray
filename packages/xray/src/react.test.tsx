@@ -151,6 +151,11 @@ function installFixtureHook(opts: {
     fixtures: {
       register,
       has: (name: string) => recorded.has(name),
+      status: (name: string) => ({
+        participates: liveData.has(name),
+        recorded: recorded.has(name),
+        replaying: replayValue && recorded.has(name),
+      }),
       read: (name: string) => recorded.get(name),
       record,
       recordAll,
@@ -744,6 +749,102 @@ describe('light box (dev toggle)', () => {
     act(() => globalThis.__XRAY__?.lightbox?.set(false))
     expect(container.querySelector('#content')).not.toBeNull()
     expect(container.querySelector('[data-xr-root]')).toBeNull()
+  })
+
+  it('keeps the presence registration through Light Box, and disposes it only on unmount', () => {
+    // Light Box unmounts the CAPTURE boundary by design; the presence registration
+    // must survive it, or the HUD's plate list drops the row along with the key
+    // that disengages the Light Box (the sites store keys off presence).
+    const disposeMounted = vi.fn()
+    const mounted = vi.fn<(name: string, el?: () => Element | null) => () => void>(
+      () => disposeMounted,
+    )
+    let value = false
+    const listeners = new Set<() => void>()
+    globalThis.__XRAY__ = {
+      captured: () => undefined,
+      mounted,
+      lightbox: {
+        get: () => value,
+        set: (next: boolean) => {
+          value = next
+          for (const listener of listeners) listener()
+        },
+        subscribe: (onChange: () => void) => {
+          listeners.add(onChange)
+          return () => listeners.delete(onChange)
+        },
+      },
+    }
+
+    render(
+      <DevSkeleton plate={plate} loading={false}>
+        <p id="content">real</p>
+      </DevSkeleton>,
+    )
+    expect(mounted).toHaveBeenCalledWith('my-banner', expect.any(Function))
+
+    act(() => globalThis.__XRAY__?.lightbox?.set(true))
+    expect(disposeMounted).not.toHaveBeenCalled()
+    // The el resolver hands the highlight the rendered skeleton root while no
+    // capture site exists.
+    const resolve = mounted.mock.calls[0]?.[1]
+    expect(resolve?.()).toBe(container.querySelector('[data-xr-root="my-banner"]'))
+
+    act(() => globalThis.__XRAY__?.lightbox?.set(false))
+    expect(disposeMounted).not.toHaveBeenCalled()
+
+    act(() => root.unmount())
+    expect(disposeMounted).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports stitch presence whenever the skeleton shows — loading and Light Box alike', () => {
+    // The stitched plates' bones are on the page while the parent's skeleton
+    // shows; the report keeps them in the HUD's list (stitch-only rows). Keyed on
+    // BOTH show paths: `showSkeleton` (loading) and the Light Box override.
+    const disposeStitched = vi.fn()
+    const stitched = vi.fn<(parent: string, names: readonly string[]) => () => void>(
+      () => disposeStitched,
+    )
+    let value = false
+    const listeners = new Set<() => void>()
+    globalThis.__XRAY__ = {
+      captured: () => undefined,
+      stitched,
+      lightbox: {
+        get: () => value,
+        set: (next: boolean) => {
+          value = next
+          for (const listener of listeners) listener()
+        },
+        subscribe: (onChange: () => void) => {
+          listeners.add(onChange)
+          return () => listeners.delete(onChange)
+        },
+      },
+    }
+
+    // Loading: the parent skeleton shows, its stitch reports.
+    render(
+      <DevSkeleton plate={parent} loading>
+        <p id="content">real</p>
+      </DevSkeleton>,
+    )
+    expect(stitched).toHaveBeenCalledWith('dashboard', ['news-feed'])
+
+    // Content ready: the report disposes with the skeleton.
+    render(
+      <DevSkeleton plate={parent} loading={false}>
+        <p id="content">real</p>
+      </DevSkeleton>,
+    )
+    expect(disposeStitched).toHaveBeenCalledTimes(1)
+
+    // Light Box: the skeleton shows again WITHOUT loading — the reported bug path.
+    act(() => globalThis.__XRAY__?.lightbox?.set(true))
+    expect(stitched).toHaveBeenCalledTimes(2)
+    act(() => globalThis.__XRAY__?.lightbox?.set(false))
+    expect(disposeStitched).toHaveBeenCalledTimes(2)
   })
 })
 
