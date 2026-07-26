@@ -97,7 +97,7 @@ export interface ClientOptions {
    */
   refreshCoverage?: () => void | Promise<void>
   /**
-   * Fixtures boot state (ADR 0015). `record` is when to write the live `data` to a sidecar
+   * Fixtures boot state (ADR 0015). `record` is when to write the live `data` into the plate module
    * (`'manual'` — HUD button only, the default; `'first-ready'`; or `'always'`); `replay` is
    * whether to substitute a recorded Fixture for live `data` (`false`, `'prefer'`, or
    * `'missing-only'`). The HUD overrides the replay toggle per tab. Absent ≡ defaults (`'manual'` /
@@ -106,10 +106,11 @@ export interface ClientOptions {
   record?: 'manual' | 'first-ready' | 'always'
   replay?: false | 'prefer' | 'missing-only'
   /**
-   * Where a recorded Fixture's OPAQUE devalue string is POSTed (the sidecar write endpoint). The
-   * client owns the devalue stringify; this only ships the bytes. Resolves once the write is
-   * server-confirmed, rejects on a non-2xx so the HUD Record button can surface a failed write.
-   * Absent ≡ Record is a no-op (the unit tests inject their own).
+   * Where a recorded Fixture's devalue payload is POSTed (the fixture write endpoint). The client
+   * owns the devalue stringify; the server renders the plate module's fixture section from the
+   * STRUCTURE, never reviving it (ADR 0033/0034). Resolves once the write is server-confirmed,
+   * rejects on a non-2xx so the HUD Record button can surface a failed write. Absent ≡ Record is a
+   * no-op (the unit tests inject their own).
    */
   recordFixtureSink?: (payload: { name: string; data: string }) => void | Promise<void>
 }
@@ -206,6 +207,31 @@ const DEFAULT_MAX_BREADTH = 512
 const deriveMaxNodes = (maxBreadth: number, maxDepth: number): number =>
   Math.round((maxBreadth * maxDepth) / 4)
 const RESIZE_DEBOUNCE = 300
+
+/**
+ * Push `entry` onto the per-name stack; the disposer removes exactly that entry (by identity), so a
+ * disposed instance never lingers and a remaining twin's entry stays. Both directions run
+ * `changed`.
+ */
+function registerStackEntry<E>(
+  map: Map<string, E[]>,
+  name: string,
+  entry: E,
+  changed: () => void,
+): () => void {
+  const stack = map.get(name)
+  if (stack) stack.push(entry)
+  else map.set(name, [entry])
+  changed()
+  return () => {
+    const current = map.get(name)
+    if (!current) return
+    const i = current.indexOf(entry)
+    if (i !== -1) current.splice(i, 1)
+    if (current.length === 0) map.delete(name)
+    changed()
+  }
+}
 
 /**
  * The capture roots for a site, the ONE place the auto/manual root models diverge (ADR 0014).
@@ -863,65 +889,52 @@ export function installXrayClient(options: ClientOptions): () => void {
     subscribe: coverageNotifier.subscribe,
   }
 
-  // Fixtures (ADR 0015). Two registries keyed by plate name:
-  // - `liveData`: the live render-INPUT `data` of the MOUNTED Skeletons for a name
-  //   (`register`), held as a stack of entries so duplicates (several Skeletons of
-  //   the same plate) and unmount lifecycle are tracked. Record reads
-  //   the LAST still-mounted entry, so an unmounted instance never shadows a
-  //   mounted one and `recordAll`/`record` never read an unmounted site. `register`
-  //   returns a disposer the dev adapter runs on unmount, which removes exactly
-  //   that instance's entry. The store keys are document-order-agnostic
-  //   (last-mounted-wins) — capture PRIMACY is document-order (`isPrimaryForName`),
-  //   so the recorded instance can differ from the capture writer when twins carry
-  //   different `data`; see the note on `record` (the guaranteed property is "no
-  //   stale unmounted data", which the disposer gives). Only render-prop Skeletons
-  //   have `data`; plain-children Skeletons never `register`.
-  // - `recorded`: the DECODED Fixture `data` for a plate — seeded from disk
-  //   (devalue-parsed) and updated on a successful Record. Replay reads from here;
-  //   `has`/`read` report it; the HUD coverage marker keys off `has`.
-  // The on-disk sidecar and the wire carry the opaque devalue STRING; only this
-  // store holds decoded values, and devalue is invoked only here (dev-only).
+  // Fixtures (ADR 0015). Fixture Sites track mounted render-prop Skeletons;
+  // `liveData` tracks their ready render-input `data` (a stack per name, so
+  // twins and unmount lifecycle are tracked and Record never reads an
+  // unmounted site — last-mounted-wins, while capture primacy stays
+  // document-order); `recorded` holds imported or newly recorded Fixture
+  // values, which Replay reads. Only the wire carries the devalue STRING; the
+  // store holds live values.
   const liveData = new Map<string, { data: unknown }[]>()
   const recorded = new Map<string, { data: unknown }>()
+  // Mounted render-prop SITES per name, independent of readiness: participation
+  // must survive loading and Light Box (which unmount content and dispose the
+  // liveData entries), or the HUD's fixtures section jumps in and out.
+  const fixtureSites = new Map<string, number>()
   const fixtureNotifier = createNotifier()
   const notifyFixtures = fixtureNotifier.notify
   const fixtures: FixtureStore = {
-    register: (name, data) => {
-      // Push this instance's entry; the disposer removes exactly this entry (by
-      // identity) on unmount, so an unmounted Skeleton's `data` never lingers and a
-      // remaining mounted twin's entry stays. Last entry = most-recently-mounted.
-      // Register and dispose both notify: `status(name).participates` (and the
-      // `missing-only` replaying derivation, which reads the live value) must track
-      // mounts, not just recordings.
-      const entry = { data }
-      const stack = liveData.get(name)
-      if (stack) stack.push(entry)
-      else liveData.set(name, [entry])
+    register: (name, data) => registerStackEntry(liveData, name, { data }, notifyFixtures),
+    registerSite: (name) => {
+      fixtureSites.set(name, (fixtureSites.get(name) ?? 0) + 1)
       notifyFixtures()
       return () => {
-        const current = liveData.get(name)
-        if (!current) return
-        const i = current.indexOf(entry)
-        if (i !== -1) current.splice(i, 1)
-        if (current.length === 0) liveData.delete(name)
+        const count = fixtureSites.get(name) ?? 0
+        if (count <= 1) fixtureSites.delete(name)
+        else fixtureSites.set(name, count - 1)
         notifyFixtures()
       }
     },
     has: (name) => recorded.has(name),
+    recordedCount: () => recorded.size,
     status: (name) => {
-      // `participates`: a mounted render-prop Skeleton is registering live `data`
-      // right now (plain children never register — ADR 0015). `replaying`: the
-      // substitution is IN EFFECT for the next ready render — the toggle is on, a
-      // Fixture exists, and under `missing-only` the live `data` is nullish (the
-      // same `missing ≡ nullish` rule the adapter applies). A recorded plate with
-      // Replay on can therefore still render live data; this says which.
+      // Participation follows mounted Fixture Sites (registerSite, stable
+      // across loading and Light Box). Recordability follows live data.
+      // Replaying also applies the configured nullish-data rule, so a
+      // recorded plate with Replay on can still render live data.
       const live = liveData.get(name)?.at(-1)
       const isRecorded = recorded.has(name)
       const replaying =
         replayEnabled.get() &&
         isRecorded &&
         (replayMode === 'prefer' ? true : live !== undefined && live.data == null)
-      return { participates: live !== undefined, recorded: isRecorded, replaying }
+      return {
+        participates: (fixtureSites.get(name) ?? 0) > 0,
+        recordable: live !== undefined,
+        recorded: isRecorded,
+        replaying,
+      }
     },
     read: (name) => recorded.get(name),
     record: async (name) => {
@@ -955,16 +968,29 @@ export function installXrayClient(options: ClientOptions): () => void {
       // recorded.
       await Promise.all([...liveData.keys()].map((name) => fixtures.record(name)))
     },
-    seed: (encoded) => {
+    seed: (values, force = false) => {
       let changed = false
-      for (const [name, str] of Object.entries(encoded)) {
-        // Do not clobber a Fixture recorded THIS session (it is fresher than disk).
-        if (recorded.has(name)) continue
-        try {
-          recorded.set(name, { data: devalueParse(str) })
+      for (const [name, data] of Object.entries(values)) {
+        // Do not clobber a Fixture recorded THIS session (it is fresher than
+        // disk) — unless this is an HMR re-seed after a plate-module edit,
+        // where the disk IS the fresher truth (ADR 0033).
+        if (!force && recorded.has(name)) continue
+        recorded.set(name, { data })
+        changed = true
+      }
+      // A forced seed is AUTHORITATIVE: a name absent from the fresh disk
+      // enumeration lost its Fixture (the export was deleted), so keeping it
+      // `recorded` would show a lit key for data that no longer exists. A
+      // just-recorded Fixture cannot be swept — its write reached disk before
+      // the watcher fired this re-seed.
+      if (force) {
+        // Map iterators tolerate deletion of the current entry. Object.hasOwn,
+        // not `in`: a plate legally named `constructor` or `toString` would
+        // match an inherited property and never be swept.
+        for (const name of recorded.keys()) {
+          if (Object.hasOwn(values, name)) continue
+          recorded.delete(name)
           changed = true
-        } catch {
-          // A hand-broken sidecar — skip it rather than break the seed.
         }
       }
       if (changed) notifyFixtures()
@@ -1367,20 +1393,8 @@ export function installXrayClient(options: ClientOptions): () => void {
     extension,
     highlight: highlighter.set,
     mounted: (name, el) => {
-      const entry = { el }
-      const stack = presence.get(name)
-      if (stack) stack.push(entry)
-      else presence.set(name, [entry])
       noteSeen(name)
-      notifySites()
-      return () => {
-        const current = presence.get(name)
-        if (!current) return
-        const i = current.indexOf(entry)
-        if (i !== -1) current.splice(i, 1)
-        if (current.length === 0) presence.delete(name)
-        notifySites()
-      }
+      return registerStackEntry(presence, name, { el }, notifySites)
     },
     stitched: (parent, names) => {
       if (names.length === 0) return () => {}

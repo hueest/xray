@@ -20,12 +20,6 @@ export default defineConfig({
   ],
 })`
 
-const tsConfig = `{
-  "compilerOptions": {
-    "types": ["@hueest/xray/virtual"]
-  }
-}`
-
 // The product-details page integrated four ways; the diff (meta) shows xray replacing
 // each pattern's loading handling.
 const wrapTabs = [
@@ -169,9 +163,8 @@ export default async function ProductDetails({ params }) {
         <Code lang="sh" code="pnpm add @hueest/xray" />
       </li>
       <li>
-        <strong>Add the plugin</strong> to your Vite config, and register the virtual-module types.
+        <strong>Add the plugin</strong> to your Vite config.
         <Code lang="ts" meta='title="vite.config.ts" ins={3,8}' code={viteConfig} />
-        <Code lang="jsonc" meta='title="tsconfig.json" ins={3}' code={tsConfig} />
       </li>
       <li>
         <strong>Wrap what loads</strong> in <code>&lt;Skeleton&gt;</code>. It slots into whatever
@@ -190,7 +183,7 @@ export default async function ProductDetails({ params }) {
       <li>
         <strong>Browse your dev server.</strong> Capture starts off: tick <strong>Capture</strong> in
         the HUD (or pass <code>capture: true</code>) and, when the component renders for real, xray
-        captures its Plate into <code>plates/</code>. The HUD tracks Coverage across every width
+        captures its Plate into <code>src/plates/</code>. The HUD tracks Coverage across every width
         band; commit the Plate and you are shipping faithful skeletons.
         <Hud />
       </li>
@@ -239,9 +232,9 @@ export default async function ProductDetails({ params }) {
     <div class="flow-row">
       <dt class="flow-term">Store</dt>
       <dd class="flow-def">
-        The result is written to its <em>Plate</em>: a small, self-contained JSON file you commit
-        beside the component. A resize captures another View into the same Plate, and any drift
-        shows up as a diff in review, never a silent lie in production.
+        The result is written to its <em>Plate</em>: a generated TypeScript module at
+        <code>src/plates/&lt;name&gt;.ts</code> you commit with the component. A resize captures another
+        View into the same Plate, and any drift shows up as a diff in review, never a silent lie in production.
       </dd>
     </div>
     <div class="flow-row">
@@ -301,7 +294,7 @@ export default async function ProductDetails({ params }) {
       <h3>Automated width sweep</h3>
       <p>
         With the companion extension connected, one press of record drives the viewport through
-        every derived breakpoint, captures each View, and writes the plates — sweep, save, done.
+        every derived breakpoint, captures each View, and writes the plates: sweep, save, done.
       </p>
       <p class="feature-link"><a href="/guides/sweep/">The Sweep →</a></p>
     </li>

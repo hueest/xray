@@ -11,6 +11,38 @@ import { Skeleton } from './react.tsx'
 declare const plate: Plate
 declare const user: { id: number; name: string }
 
+// Typed fixtures (ADR 0031): plates whose env-file declare block (ADR 0034)
+// types the virtual module as `Plate<F>`. `matching` recorded the full shape,
+// `narrow` a subset (older but still-valid recording), `drifted` a shape the
+// current `user` type has outgrown (no `name`).
+declare const matchingPlate: Plate<{ id: number; name: string }>
+declare const narrowPlate: Plate<{ id: number }>
+declare const driftedPlate: Plate<{ id: number; label: string }>
+declare const userMaybe: { id: number; name?: string } | undefined
+
+// The ADR 0031 §3 encoding: `F` is the fixture export's `as const` type — readonly
+// literal tuples — and the check strips readonly (`Recorded<F>`) before a bare
+// `extends`. A recorded tuple of variant literals must satisfy a
+// discriminated-union array, and literal-typed Map members must satisfy their
+// widened declarations (method bivariance).
+declare const constPlate: Plate<{
+  readonly items: readonly [
+    { readonly kind: 'a'; readonly n: 1 },
+    { readonly kind: 'b'; readonly s: 'hi' },
+  ]
+}>
+declare const constData: { items: ({ kind: 'a'; n: number } | { kind: 'b'; s: string })[] }
+// GraphQL null-for-absent: the recorded null must satisfy BOTH `?: string` and
+// `: string | null` spellings (Recorded<F> projects null to never).
+declare const nullishPlate: Plate<{
+  readonly template: { readonly title: 'Hi'; readonly ctaLink: null; readonly sub: null }
+}>
+declare const nullishData: { template: { title: string; ctaLink?: string; sub: string | null } }
+declare const tuplePlate: Plate<[{ kind: 'a'; n: 1 }, { kind: 'b'; s: 'hi' }]>
+declare const variants: ({ kind: 'a'; n: number } | { kind: 'b'; s: string })[]
+declare const mapPlate: Plate<{ tags: Map<'a', 1>; when: Date }>
+declare const mapData: { tags: Map<string, number>; when: Date }
+
 // Returning the elements makes each expression "used" (lint) without a runtime
 // render. The function is exported and never called; tsgo still checks the bodies.
 export function typeChecks(): ReactNode[] {
@@ -53,7 +85,59 @@ export function typeChecks(): ReactNode[] {
     // `root="manual"` with NO children is likewise an error (children is required).
     // @ts-expect-error root="manual" requires render-prop children
     <Skeleton key="manual-empty" plate={plate} root="manual" />,
+
+    // (d) Typed fixtures (ADR 0031). A recorded Fixture whose shape satisfies the
+    // `data` type compiles — including a NARROWER recording (`F extends T` is the
+    // check direction: the replayed value must satisfy the declared type, and a
+    // subset shape against an optional-field type does).
+    <Skeleton key="fx-match" plate={matchingPlate} data={user}>
+      {({ data }) => <span>{data.name}</span>}
+    </Skeleton>,
+    <Skeleton key="fx-narrow" plate={narrowPlate} data={userMaybe}>
+      {({ data }) => <span>{data?.id}</span>}
+    </Skeleton>,
+
+    // A typed plate WITHOUT a data prop is unchecked — plain children, bare
+    // loading, and suspense sites never participate in Replay, so drift cannot
+    // affect them.
+    <Skeleton key="fx-no-data" plate={driftedPlate} loading>
+      <div />
+    </Skeleton>,
+
+    // DRIFT: `user` requires `name`, the recorded Fixture has none — the plate
+    // prop fails with the branded FixtureOutOfDate type, at the call site, in the
+    // consumer's own compile.
+    // @ts-expect-error recorded Fixture no longer satisfies the data type — re-record it
+    <Skeleton key="fx-drift" plate={driftedPlate} data={user}>
+      {({ data }) => <span>{data.name}</span>}
+    </Skeleton>,
+
+    // (e) Exact-record encoding. A recorded tuple checks each element against
+    // the discriminated union independently — the case literal-widening or
+    // element-merging would false-positive (GraphQL __typename, variant tags).
+    <Skeleton key="fx-tuple" plate={tuplePlate} data={variants}>
+      {({ data }) => <span>{data.length}</span>}
+    </Skeleton>,
+    // The real emitted shape: readonly-everything from `as const`, stripped by
+    // Recorded<F> before the extends — mutable-array data types stay satisfied.
+    <Skeleton key="fx-const" plate={constPlate} data={constData}>
+      {({ data }) => <span>{data.items.length}</span>}
+    </Skeleton>,
+    <Skeleton key="fx-null" plate={nullishPlate} data={nullishData}>
+      {({ data }) => <span>{data.template.title}</span>}
+    </Skeleton>,
+    // Literal-membered Map satisfies its widened declaration.
+    <Skeleton key="fx-map" plate={mapPlate} data={mapData}>
+      {({ data }) => <span>{data.tags.size}</span>}
+    </Skeleton>,
   ]
+}
+
+// A fixture-typed Plate stays assignable wherever a bare `Plate` is expected —
+// the phantom parameter must never fracture the plain surface. (A function body
+// like `typeChecks` above: compiled, never called.)
+export function plateAssignability(typed: Plate<{ id: number; name: string }>): Plate {
+  return typed
 }
 
 describe('Skeleton types', () => {

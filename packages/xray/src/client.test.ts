@@ -458,24 +458,32 @@ describe('fixtures store (ADR 0015)', () => {
     await expect(fixtures?.record('fn-data')).rejects.toThrow()
   })
 
-  it('seeds recorded fixtures from opaque devalue strings without clobbering this session', () => {
+  it('seeds decoded values without clobbering this session, unless forced (ADR 0033)', () => {
     const recordFixtureSink = vi.fn(async () => {})
     uninstall = installXrayClient({ sink: () => {}, recordFixtureSink })
     const fixtures = globalThis.__XRAY__?.fixtures
     if (!fixtures) throw new Error('fixtures store missing')
     const onChange = vi.fn()
     fixtures.subscribe(onChange)
-    // devalue.stringify of { id: 7 } — seed it as the opaque on-disk form.
-    fixtures.seed({ seeded: JSON.stringify([{ id: 1 }, 7]) })
+    // The fixtures virtual module hands over LIVE values — no devalue involved.
+    fixtures.seed({ seeded: { id: 7 } })
     expect(fixtures.has('seeded')).toBe(true)
     const seeded = fixtures.read('seeded')
     if (!seeded) throw new Error('expected a seeded fixture')
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- devalue round-trips the seeded shape.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the store holds the seeded shape.
     expect((seeded.data as { id: number }).id).toBe(7)
     expect(onChange).toHaveBeenCalled()
-    // A broken sidecar string is skipped, not thrown.
-    expect(() => fixtures.seed({ broken: 'not-devalue{' })).not.toThrow()
-    expect(fixtures.has('broken')).toBe(false)
+    // A plain re-seed never clobbers this session's entries — and never
+    // removes them either (a partial seed is additive)…
+    fixtures.seed({ other: { id: 1 } })
+    expect(fixtures.read('seeded')?.data).toEqual({ id: 7 })
+    expect(fixtures.has('other')).toBe(true)
+    // …but the forced HMR re-seed is AUTHORITATIVE: the edited plate module
+    // is the fresher truth, listed names overwrite, and a name absent from
+    // the fresh enumeration lost its Fixture and must not stay recorded.
+    fixtures.seed({ seeded: { id: 9 } }, true)
+    expect(fixtures.read('seeded')?.data).toEqual({ id: 9 })
+    expect(fixtures.has('other')).toBe(false)
   })
 
   it('register returns a disposer so unmounted data never lingers or is recorded', async () => {

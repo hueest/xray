@@ -14,6 +14,7 @@ import {
   collectStitchNames,
   isStitchLive,
   markStitchesLive,
+  type FixtureOutOfDate,
   renderPlate,
   resolveContent,
   type SkeletonProps,
@@ -21,7 +22,7 @@ import {
   useSkeletonTiming,
 } from './react.core.tsx'
 
-export type { SkeletonProps }
+export type { FixtureOutOfDate, SkeletonProps }
 
 /**
  * Render a committed Plate while content is loading.
@@ -39,7 +40,7 @@ export type { SkeletonProps }
  * In production this component ships no capture client, HUD, Light Box, store, or subscriptions.
  * Stitches resolve from the statically imported `refs` graph.
  */
-export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
+export function Skeleton<T = undefined, F = unknown>(props: SkeletonProps<T, F>) {
   // `captureWalker` (ADR 0018) is intentionally NOT destructured: production
   // never captures, so the walker has no effect here. It ships only as a type on
   // the props (erased at build) — no walker/capture code reaches the prod

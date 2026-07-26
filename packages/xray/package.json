@@ -1,6 +1,6 @@
 {
   "name": "@hueest/xray",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Auto-captured skeleton loading screens for Vite — capture the structure, ship the plate.",
   "keywords": [
     "loading",
@@ -98,5 +98,8 @@
     "vite": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
   }
 }

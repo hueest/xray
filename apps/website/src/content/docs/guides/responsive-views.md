@@ -21,7 +21,7 @@ the markup: a divergent subtree gated by a `@media` rule that toggles
 3. Turn on **Capture** in the HUD, or open the page with `?xray-capture`.
 4. Resize the browser to the View you want and let the component render for real.
 5. Turn **Capture** off to end the session and write the Plate, then commit the
-   updated `plates/<name>.json` file.
+   updated `src/plates/<name>.ts` file.
 
 Each capture is filed under the width band it was taken in. If the component only
 changes with CSS, the same structural capture can serve multiple widths. If the

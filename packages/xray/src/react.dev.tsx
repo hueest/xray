@@ -11,6 +11,7 @@ import {
 import { BOUNDARY_ATTR, type Plate } from './plate.ts'
 import {
   collectStitchNames,
+  type FixtureOutOfDate,
   isRenderProp,
   isStitchLive,
   markStitchesLive,
@@ -23,7 +24,7 @@ import {
 } from './react.core.tsx'
 import type { XrayCaptureWalker } from './measure.ts'
 
-export type { SkeletonProps }
+export type { FixtureOutOfDate, SkeletonProps }
 
 // Stable no-op store fallbacks: with no dev client installed (capture + HUD both
 // off, or SSR) the subscriptions are inert and the snapshots are constants, so
@@ -126,7 +127,6 @@ function useFixtureData<T>(name: string, data: T | undefined, renderProp: boolea
     return dispose
   }, [name, data, renderProp])
 
-  // Plain children never replay either — they have no `data` seam to substitute.
   if (!renderProp) return data
   // Replay substitution: only when the toggle is on AND a Fixture exists. In
   // `missing-only`, fall back ONLY when live `data` is nullish.
@@ -156,7 +156,7 @@ function useLivePlate(plate: Plate): Plate {
  * browse-time capture. The xray plugin aliases `@hueest/xray/react` to this module in `serve`;
  * production gets the lean `react.tsx`.
  */
-export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
+export function Skeleton<T = undefined, F = unknown>(props: SkeletonProps<T, F>) {
   const {
     plate,
     css,
@@ -191,6 +191,15 @@ export function Skeleton<T = undefined>(props: SkeletonProps<T>) {
   // ref resolver hands the highlight the rendered skeleton root as its fallback
   // while no capture site exists.
   useEffect(() => globalThis.__XRAY__?.mounted?.(plate.name, () => rootRef.current), [plate.name])
+  // Fixture-site registration (ADR 0015): participation lasts the Skeleton
+  // lifetime; live `data` (useFixtureData, inside the ready-only boundary)
+  // registers only while content is mounted. The split keeps the HUD stable
+  // when Light Box unmounts content: `recordable` drops, participation does not.
+  const renderProp = isRenderProp<T>(children)
+  useEffect(() => {
+    if (!renderProp) return undefined
+    return globalThis.__XRAY__?.fixtures?.registerSite?.(plate.name)
+  }, [renderProp, plate.name])
   // Instant-reveal continuation (ADR 0020), identical to prod: read ONCE at first
   // render whether this plate is a live stitch under a still-showing parent, and
   // mark this plate's direct stitch names live WHILE the skeleton shows (keyed on

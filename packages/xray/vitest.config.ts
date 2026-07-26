@@ -11,8 +11,20 @@ export default defineConfig({
     // package runs node by default with per-file `@vitest-environment happy-dom`
     // pragmas, and jsdom is not installed. Pin the default back.
     environment: 'node',
-    // Solid ships real ESM with browser/dev conditions; inline it so the transform
-    // and conditions resolve consistently under vitest.
-    server: { deps: { inline: [/solid-js/, /@solidjs/] } },
+    server: {
+      deps: {
+        // Solid ships real ESM with browser/dev conditions; inline it so the transform
+        // and conditions resolve consistently under vitest.
+        inline: [/solid-js/, /@solidjs/],
+        // The server reads plate modules with a native `import(fileURL + '?t=' + mtime)`
+        // (ADR 0034 §3). Vitest's module runner would otherwise intercept it, strip the
+        // integer half of the `?t=` query (Vite's own timestamp param), and hand oxc an
+        // id like `banner.ts?.1123` — parsed as JS, where the fixture's `as const`
+        // fails. Externalizing the test tmp dirs (every mkdtemp prefix here is `xray-`)
+        // routes those imports to Node's own loader, the same path the real dev server
+        // takes.
+        external: [/[\\/]xray-[^\\/]*[\\/]/],
+      },
+    },
   },
 })

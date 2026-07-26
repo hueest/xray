@@ -393,17 +393,23 @@ describe('fixture status', () => {
     // Nothing mounted, nothing recorded.
     expect(fixtures.status('hero')).toEqual({
       participates: false,
+      recordable: false,
       recorded: false,
       replaying: false,
     })
-    // A render-prop site registers live data → participates.
+    // The dev adapter registers the SITE for the Skeleton lifetime and the
+    // live data only while ready — participation follows the Site alone
+    // (registering data without a Site models nothing the adapter does).
+    const disposeSite = fixtures.registerSite('hero')
     const dispose = fixtures.register('hero', { rows: [1] })
     expect(fixtures.status('hero').participates).toBe(true)
+    expect(fixtures.status('hero').recordable).toBe(true)
     // Recorded + replay on, but live data PRESENT under missing-only → not replaying.
     await fixtures.record('hero')
     replay.set(true)
     expect(fixtures.status('hero')).toEqual({
       participates: true,
+      recordable: true,
       recorded: true,
       replaying: false,
     })
@@ -412,6 +418,29 @@ describe('fixture status', () => {
     const disposeNull = fixtures.register('hero', null)
     expect(fixtures.status('hero').replaying).toBe(true)
     disposeNull()
+    disposeSite()
+    expect(fixtures.status('hero').participates).toBe(false)
+  })
+
+  it('registerSite keeps participation stable while live data comes and goes (Light Box)', () => {
+    install({ recordFixtureSink: () => {} })
+    const fixtures = hook().fixtures
+    assert(fixtures)
+    // The dev Skeleton registers the SITE on mount, across loading and Light Box.
+    const disposeSite = fixtures.registerSite('hero')
+    expect(fixtures.status('hero')).toMatchObject({ participates: true, recordable: false })
+    // Content mounts (ready) → live data registers → recordable.
+    const disposeLive = fixtures.register('hero', { rows: [1] })
+    expect(fixtures.status('hero')).toMatchObject({ participates: true, recordable: true })
+    // Light Box unmounts content → live data disposes; participation SURVIVES —
+    // this is what keeps the HUD's fixtures section from jumping.
+    disposeLive()
+    expect(fixtures.status('hero')).toMatchObject({ participates: true, recordable: false })
+    // Twins: two sites of one name participate until the LAST unmounts.
+    const disposeTwin = fixtures.registerSite('hero')
+    disposeSite()
+    expect(fixtures.status('hero').participates).toBe(true)
+    disposeTwin()
     expect(fixtures.status('hero').participates).toBe(false)
   })
 

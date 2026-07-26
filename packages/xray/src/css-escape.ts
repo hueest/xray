@@ -4,11 +4,11 @@
  *
  * A plate's `css` is normally produced by the capture path (`filterLayoutDecls` + `classify`),
  * which only ever emits well-formed `selector { prop: value }` rules — never a raw-text terminator.
- * But a committed `plates/<name>.json` is UNTRUSTED at render time (it can be hand-edited or arrive
- * over git, ADR 0023), and a corrupt/malicious `css` could carry a `</style>` or an HTML comment
- * delimiter. `<style>` is a raw-text element: the parser ends the element at the first `</style` it
- * sees and resumes parsing the rest as ordinary HTML, so an unescaped terminator in the CSS body
- * turns the tail of the plate into live markup.
+ * But a committed plate module (`src/plates/<name>.ts`) is UNTRUSTED at render time (it can be
+ * hand-edited or arrive over git, ADR 0023), and a corrupt/malicious `css` could carry a `</style>`
+ * or an HTML comment delimiter. `<style>` is a raw-text element: the parser ends the element at the
+ * first `</style` it sees and resumes parsing the rest as ordinary HTML, so an unescaped terminator
+ * in the CSS body turns the tail of the plate into live markup.
  *
  * The React text-child path (`<style>{css}</style>`) is already safe — React escapes the child —
  * but the two STRING paths interpolate `css` directly into a markup string (`renderPlateHtml`

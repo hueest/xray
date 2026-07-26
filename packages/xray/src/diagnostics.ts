@@ -12,8 +12,8 @@
  * Strictly DEV-ONLY (ADR 0024, ADR 0008): this type is NOT a public package export and MUST NEVER
  * reach the persisted Plate JSON, the `GatedPlate`, or the production adapter. It rides on the
  * TRANSIENT `ViewIR.diagnostics` field only, which `captureView` populates and the dev client
- * strips before posting (so committed `plates/<name>.json` stays byte-identical to a capture that
- * produced no diagnostics).
+ * strips before posting (so the committed plate module `src/plates/<name>.ts` stays byte-identical
+ * to a capture that produced no diagnostics).
  *
  * Centralized on purpose: invalid posted/committed plates (ADR 0023) reuse the same messaging, so
  * the code table and formatter stay reusable. Browser and server share `formatDiagnostic` so their
@@ -131,7 +131,7 @@ const DIAGNOSTIC_MESSAGES: Record<DiagnosticCode, string> = {
   'too-large':
     'capture exceeded a Collect limit and was skipped; the <Skeleton> likely sits too high in the tree',
   'invalid-plate-file':
-    'a committed plate file could not be read (corrupt JSON, wrong shape, or a version mismatch) and was ignored',
+    'a committed plate module could not be read (a broken import, wrong shape, or a version mismatch) and was ignored',
 }
 
 /**

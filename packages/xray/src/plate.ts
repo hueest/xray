@@ -47,10 +47,25 @@ export type LeafKind = 'text-line' | 'text-block' | 'media' | 'box' | 'hidden'
  * chunk.ts), so the adapter injects strings instead of walking a tree on the latency-critical first
  * paint — and no per-framework serializer ships to the client (ADR 0008).
  */
-export interface Plate {
+export interface Plate<F = unknown> {
   v: number
   /** Capture name; comes from the virtual-module specifier, never typed at a call site. */
   name: string
+  /**
+   * PHANTOM fixture type (typed fixtures, ADR 0031) — never present at runtime; committed plates
+   * carry no such field. The generated env file (`xray-env.gen.d.ts`, ADR 0032) declares a
+   * fixture-bearing plate's virtual module as `Plate<typeof import('./<name>').fixture>` (the `as
+   * const` fixture export's derived type), and this optional field is the structural anchor that
+   * keeps `F` alive through assignability (an unused type parameter would be erased and the drift
+   * check in react.core.tsx would silently no-op). The tilde key is the type-only-member convention
+   * (standard-schema's `~standard`): it reads as internal, and a STRING key stays structural across
+   * the package's bundled d.ts entry points — a `unique symbol` would be declared once PER ENTRY by
+   * the d.ts bundler, and two copies of the symbol never unify, breaking `F` inference for any
+   * consumer that mixes entry points (the React adapter with the plugin types). The `unknown`
+   * default means a bare `Plate` — the wildcard virtual-module declaration, every internal use — is
+   * UNCHECKED and stays assignable from any `Plate<F>`.
+   */
+  readonly '~fixture'?: F
   /**
    * The root's children, pre-serialized (ADR 0008): a stitch-free run is one HTML `string`; a
    * stitch is `{ r: name }`; a stitch-bearing element is `{ c: className, k: chunk[] }`. Null until
@@ -181,13 +196,14 @@ export interface ViewCapture {
 }
 
 /**
- * The committed `plates/<name>.json` shape (ADR 0022): the whole Plate already projected in the
- * browser (the in-browser Serialize folds emit + the multi-View gating + classify in one session),
- * so disk holds ONE gated, content-addressed tree + css rather than per-View captures assembled at
- * load. It is a `GatedPlate` (the structural `{tree, css}` `serializePlate` consumes) PLUS the
- * `breakpoints` the HUD coverage reads — the analysis-only geometry never crosses the wire (ADR
- * 0021). The gen-side runs `serializePlate(stored) → Plate` (chunks) at module-load, leaving the
- * Tailwind/Bundle passthrough a clean gen-side seam.
+ * The committed plate structure (ADR 0022) — the named `plate` export of the plate module
+ * `src/plates/<name>.ts` (ADR 0034): the whole Plate already projected in the browser (the
+ * in-browser Serialize folds emit + the multi-View gating + classify in one session), so disk holds
+ * ONE gated, content-addressed tree + css rather than per-View captures assembled at load. It is a
+ * `GatedPlate` (the structural `{tree, css}` `serializePlate` consumes) PLUS the `breakpoints` the
+ * HUD coverage reads — the analysis-only geometry never crosses the wire (ADR 0021). The gen-side
+ * runs `serializePlate(stored) → Plate` (chunks) at module-load, leaving the Tailwind/Bundle
+ * passthrough a clean gen-side seam.
  */
 export interface StoredPlate extends GatedPlate {
   /**
@@ -388,21 +404,21 @@ export interface Span {
 
 /**
  * Dev-only Fixture store (ADR 0015): stored render-INPUT `data` per Plate, recorded to and replayed
- * from a `plates/<name>.fixture.json` sidecar. Entirely dev-only — devalue and this store never
- * reach the production bundle.
+ * from the plate module's `fixture` export (`src/plates/<name>.ts`, ADR 0034). Entirely dev-only —
+ * this store never reaches the production bundle.
  *
  * Two cooperating halves, both flowing through the render-prop `data` seam (ADR 0014):
  *
  * - The dev adapter (`react.dev.tsx`) calls `register(name, data)` at `loading=false` with the live
  *   `data` it is about to render, so the latest recordable input for each mounted Plate is always
  *   in scope for Record.
- * - `record(name)` serializes that registered live `data` with devalue and POSTs it to the sidecar
- *   (the HUD button and the `first-ready`/`always` modes call it). `has(name)` reports whether a
- *   Fixture exists (HUD coverage marker), and `read(name)` returns the parsed Fixture `data` for
+ * - `record(name)` serializes that registered live `data` with devalue and POSTs it to the fixture
+ *   endpoint (the HUD button and the `first-ready`/`always` modes call it). `has(name)` reports
+ *   whether a Fixture exists (HUD coverage marker), and `read(name)` returns the Fixture `data` for
  *   Replay to substitute in front of the render prop.
  *
- * The store holds DECODED values (the dev client owns the devalue parse, since it has the live
- * runtime); only the on-disk sidecar and the wire carry the opaque devalue string.
+ * The store holds LIVE values; only the wire carries the opaque devalue string — disk holds the
+ * rendered plate module (ADR 0033/0034).
  */
 export interface FixtureStore {
   /**
@@ -414,25 +430,49 @@ export interface FixtureStore {
    * name mounted, the live value is the most-recently-registered still-mounted instance.
    */
   register: (name: string, data: unknown) => () => void
+  /**
+   * Mark a mounted render-prop `<Skeleton>` SITE for `name`, independent of readiness: the dev
+   * adapter calls this on mount and runs the disposer on unmount, across loading and Light Box
+   * alike. This is what `status().participates` keys on — `register` above tracks the live `data`
+   * VALUE, which exists only while content is mounted, and deriving participation from it made the
+   * HUD's fixtures section vanish whenever Light Box unmounted content. Counted per instance, so
+   * twins of one name participate until the last unmounts.
+   */
+  registerSite: (name: string) => () => void
   /** True once a recorded Fixture exists for `name` (drives the HUD coverage marker). */
   has: (name: string) => boolean
   /**
-   * The full per-plate fixture status the HUD renders. `participates` is whether a mounted
-   * render-prop `<Skeleton>` is registering live `data` right now (a plain-children Skeleton never
-   * participates, so it shows no fixture affordances at all). `recorded` mirrors `has`. `replaying`
-   * is whether Replay substitution is IN EFFECT for the next ready render: the Replay toggle is on,
-   * a Fixture exists, and — under `missing-only` — the registered live `data` is nullish. So a
-   * plate can be `recorded` with Replay on and still render live data; the status says which.
-   * Changes to any input (register/dispose, record, seed, the Replay toggle) notify `subscribe`.
+   * How many Fixtures are recorded, across ALL names. The HUD's fixtures footer keys on this
+   * directly — deriving "any fixture exists" from the row/disk name lists silently hides the footer
+   * whenever a recorded name drops out of both (an unstitched parent variant, coverage not yet
+   * seeded); the store is the source of truth, so the footer can never vanish while a Fixture
+   * exists.
    */
-  status: (name: string) => { participates: boolean; recorded: boolean; replaying: boolean }
+  recordedCount: () => number
+  /**
+   * The full per-plate fixture status the HUD renders. `participates` is whether a render-prop
+   * `<Skeleton>` site for `name` is MOUNTED — stable across loading and Light Box (a plain-children
+   * Skeleton never participates, so it shows no fixture affordances at all). `recordable` is
+   * whether live `data` is in scope RIGHT NOW, i.e. `record(name)` would succeed — false while
+   * loading or light-boxed, since content is not mounted. `recorded` mirrors `has`. `replaying` is
+   * whether Replay substitution is IN EFFECT for the next ready render: the Replay toggle is on, a
+   * Fixture exists, and — under `missing-only` — the registered live `data` is nullish. So a plate
+   * can be `recorded` with Replay on and still render live data; the status says which. Changes to
+   * any input (register/registerSite/dispose, record, seed, the Replay toggle) notify `subscribe`.
+   */
+  status: (name: string) => {
+    participates: boolean
+    recordable: boolean
+    recorded: boolean
+    replaying: boolean
+  }
   /** The parsed Fixture `data` for `name`, or `undefined` when none is recorded. */
   read: (name: string) => { data: unknown } | undefined
   /**
-   * Serialize the registered live `data` for `name` with devalue and POST it to the sidecar.
-   * Returns a promise that resolves once the write is server-confirmed (so the HUD can surface a
-   * failed Record). Throws loudly when the live `data` is unrecordable (devalue's contract) or no
-   * live `data` was registered (a plain-children `<Skeleton>` has none).
+   * Serialize the registered live `data` for `name` with devalue and POST it to the fixture
+   * endpoint. Returns a promise that resolves once the write is server-confirmed (so the HUD can
+   * surface a failed Record). Throws loudly when the live `data` is unrecordable (devalue's
+   * contract) or no live `data` was registered (a plain-children `<Skeleton>` has none).
    */
   record: (name: string) => Promise<void>
   /**
@@ -442,11 +482,16 @@ export interface FixtureStore {
    */
   recordAll: () => Promise<void>
   /**
-   * Seed the store from the on-disk sidecars on boot: a `{ <name>: devalueString }` map (the opaque
-   * strings the server serves). The client decodes each with devalue. Existing entries are not
-   * clobbered, so a Fixture recorded this session survives a re-seed.
+   * Seed the store with LIVE values — the plate modules' fixture exports imported through the
+   * module graph (`virtual:xray/fixtures`, ADR 0033); no devalue decode is involved. By default
+   * existing entries are not clobbered, so a Fixture recorded this session survives a boot re-seed;
+   * `force` makes the seed AUTHORITATIVE — the HMR re-seed after a plate-module edit, where the
+   * disk IS the fresher truth: listed names overwrite, and previously recorded names ABSENT from
+   * `values` are removed (a Fixture deleted from its module must not stay `recorded`). A Record
+   * that has not reached disk yet cannot be lost: the write lands before the watcher fires the
+   * re-seed, so the fresh seed always contains it.
    */
-  seed: (encoded: Record<string, string>) => void
+  seed: (values: Record<string, unknown>, force?: boolean) => void
   /** React subscription so the HUD re-renders when a Fixture is recorded or seeded. */
   subscribe: (onChange: () => void) => () => void
 }

@@ -74,9 +74,23 @@ strictly for Plates (DOM → Plate). Never "capture a fixture."
   while a still-mounted twin (same Plate name) keeps its entry, the live value
   is the most-recently-registered still-mounted instance. (Distinct from
   capture's twin policy in ADR 0006, where the first-in-DOM instance wins.)
+- Participation is registered SEPARATELY from the live value (`registerSite`,
+  counted per instance at the always-mounted Skeleton level): a render-prop
+  site participates while mounted — across loading and Light Box — while
+  `recordable` (live `data` in scope) tracks the ready-only registration
+  above. Deriving participation from the live value made the HUD's fixtures
+  section vanish whenever Light Box unmounted content; the split is what lets
+  the per-plate ◆ record key and the record-all action render stably with an
+  honest disabled state.
 - The dev client boots whenever replay or auto-record is configured, not only
   when capture or the HUD is enabled — `fixtures: { replay: 'prefer' }` alone
   must inject the runtime, or it would be a silent no-op.
 - A new committed artifact format; its stability depends on devalue's output
-  format — note for versioning if the on-disk shape ever changes.
+  format. Note for versioning if the on-disk shape ever changes.
+  ([ADR 0033](./0033-fixtures-as-typescript-source.md) renders the recorded
+  value as TypeScript source, reading the payload as JSON structure and
+  writing value literals, with the invariant above restated as "renders
+  text from the structure, never revives";
+  [ADR 0034](./0034-plate-modules.md) lands the value as the plate module's
+  `fixture` export.)
 - Unlocks the deterministic CI / benchmark capture path together with ADR 0010.

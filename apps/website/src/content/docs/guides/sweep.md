@@ -37,7 +37,7 @@ never reads page data, and the allowlist is pinned by tests
 4. Press **record**. The button shows a progress ring per width; when the
    Sweep completes, the session writes itself and the ticker reads
    `✓ n plates`.
-5. Commit the updated `plates/` files.
+5. Commit the updated `src/plates/` files.
 
 A per-plate record key does the same for a single Plate: it sweeps just that
 Plate's bands and keys itself off.

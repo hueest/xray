@@ -36,11 +36,12 @@ in the HUD (or open the page with `?xray-lightbox`); every mounted
 
 Capture starts off. Tick **Capture** in the HUD (or pass `capture: true` to
 `xrayVitePlugin`) to start writing Plates as you browse. With Capture on,
-captures land in `plates/` (commit them). Resize to capture other Views: each
-width lands as its own View, carried whole in the one Plate and gated by
+captures land in `src/plates/` (commit them). Resize to capture other Views:
+each width lands as its own View, carried whole in the one Plate and gated by
 `@media display:none` (JS-driven structure differences become Projections).
-Add `"@hueest/xray/virtual"` to the tsconfig `types` for the
-`virtual:xray/plates/*` imports.
+The dev server generates `src/plates/xray-env.gen.d.ts` to type the
+`virtual:xray/plates/*` imports. Commit the file. No tsconfig changes are
+required. The dev server needs Node 22.18 or later (23.6 within the 23 line).
 
 ## Develop
 

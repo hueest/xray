@@ -36,3 +36,17 @@ describe.skipIf(!hasDist)('dist chunk isolation', () => {
     }
   })
 })
+
+describe('package manifest pins', () => {
+  it('the engines range excludes Node 23.0-23.5, where type stripping is still flagged', () => {
+    // The server executes committed plate modules with Node's own type
+    // stripping (ADR 0034 §3): unflagged since 22.18 within the 22 line and
+    // since 23.6 onward. A plain ">=22.18" would admit 23.0-23.5, where every
+    // plate import fails at runtime.
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- our own manifest; the assertion below pins the value
+    const pkg = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
+    ) as { engines?: { node?: string } }
+    expect(pkg.engines?.node).toBe('^22.18.0 || >=23.6.0')
+  })
+})

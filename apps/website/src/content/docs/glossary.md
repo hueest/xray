@@ -21,7 +21,7 @@ _Avoid_: hint (the author's DOM attribute), mutation, patch
 
 ### Bake
 
-The build-time lowering of a committed plate into its importer's chunk: the virtual module reads `plates/<name>.json` and emits the tree-only default export plus its css imports (ADR 0026), per-chunk, with no global registry. The concrete work of the Bundle seam.
+The build-time lowering of a committed plate into its importer's chunk: the virtual module reads the plate module `src/plates/<name>.ts` and emits the tree-only default export plus its css imports (ADR 0026), per-chunk, with no global registry. The concrete work of the Bundle seam.
 _Avoid_: bundle (the seam; Bake is the module emission), inline
 
 ### Blink
@@ -91,7 +91,7 @@ _Avoid_: accuracy, quality, pixel-perfection (the standard is glance-level readi
 
 ### Fixture
 
-Stored render-_input_ data for a `<Skeleton>`: the `data` that produced a captured Plate, serialized (dev-only) to a sidecar (`plates/<name>.fixture.json`) so a skeleton can be captured from hard-to-reproduce or deliberately frozen state. A Fixture is the input; a Plate is the output. One width-independent Fixture per Plate. Never exists in the production bundle.
+Stored render-_input_ data for a `<Skeleton>`: the `data` that produced a captured Plate, written (dev-only) into the plate module as `export const fixture = … as const` (`src/plates/<name>.ts`, ADR 0034) so a skeleton can be captured from hard-to-reproduce or deliberately frozen state. A Fixture is the input; a Plate is the output. One width-independent Fixture per Plate. Never exists in the production bundle. The generated `xray-env.gen.d.ts` types a fixture-bearing plate's import with the export's own derived shape, so the consumer's compiler flags a Fixture the `data` type has outgrown.
 _Avoid_: mock, stub, snapshot, "captured fixture" (capture is reserved for Plates)
 
 ### Flatten
@@ -156,7 +156,7 @@ _Avoid_: walk, build, read, capture (Capture is the whole act)
 
 ### Plate
 
-The serialized structural capture of a component's rendered DOM, the data a Skeleton renders from — like an x-ray plate, the recorded image rather than the live body. The Plate is the tree only; the scoped CSS captured with it travels beside it as an independent sibling artifact (ADR 0026). Imported per-component via `virtual:xray/plates/<name>` and passed in as the `plate` prop; committed to the `plates/` directory and lowered to render chunks at build time. A Plate may reference child Plates at its stitches; those resolve through the static import graph (and the dev store), never from a global runtime registry.
+The serialized structural capture of a component's rendered DOM, the data a Skeleton renders from — like an x-ray plate, the recorded image rather than the live body. The Plate is the tree only; the scoped CSS captured with it travels beside it as an independent sibling artifact (ADR 0026). Imported per-component via `virtual:xray/plates/<name>` and passed in as the `plate` prop; committed to the `src/plates/` directory and lowered to render chunks at build time. A Plate may reference child Plates at its stitches; those resolve through the static import graph (and the dev store), never from a global runtime registry.
 _Avoid_: cast, skull, snapshot, tree, orchard
 
 ### Projection

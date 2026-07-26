@@ -7,8 +7,10 @@
  *
  * @module @hueest/xray
  */
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { stringify as devalueStringify } from 'devalue'
 import type { Plugin } from 'vite'
 import {
   BASE_CSS,
@@ -25,6 +27,7 @@ import {
   formatDiagnostic,
   makeDiagnostic,
 } from './diagnostics.ts'
+import { renderEnvFile, renderPlateSourceModule } from './plate-source.ts'
 import { isValidPlateName } from './name.ts'
 import { parseStoredPlate } from './validate.ts'
 
@@ -41,8 +44,13 @@ export { isValidPlateName } from './name.ts'
  */
 export interface XrayOptions {
   /**
-   * Directory where Plate JSON files are written and read, relative to the Vite root. Default:
-   * `plates`.
+   * Directory where plate modules (`<name>.ts`, ADR 0034) are written and read, relative to the
+   * Vite root. Default: `src/plates` (ADR 0032) — under `src` so the standard tsconfig `include:
+   * ["src"]` picks up the plate modules and the generated `xray-env.gen.d.ts` with no tsconfig
+   * edits; plates are committed source artifacts and read as such there. Known edge: with a Vite
+   * `root` that is not the package directory, `src/plates` resolves against that ROOT and can land
+   * outside the tsconfig `include`, silently disabling the drift check — set `platesDir` and add
+   * one `include` entry in that case.
    */
   platesDir?: string
   /**
@@ -78,10 +86,10 @@ export interface XrayOptions {
     maxDepth?: number
   }
   /**
-   * Dev-only Fixtures (ADR 0015): record a `<Skeleton>`'s render-input `data` to a
-   * `plates/<name>.fixture.json` sidecar and replay it in place of live data so capture is
-   * deterministic. Boot state only — the HUD is per-tab authority, just like `capture`. Entirely
-   * dev-only; nothing here ships in production.
+   * Dev-only Fixtures (ADR 0015/0033/0034): record a `<Skeleton>`'s render-input `data` as the
+   * `fixture` export of the committed plate module (`src/plates/<name>.ts`) and replay it in place
+   * of live data so capture is deterministic. Boot state only — the HUD is per-tab authority, just
+   * like `capture`. Entirely dev-only; nothing here ships in production.
    */
   fixtures?: {
     /**
@@ -99,11 +107,34 @@ export interface XrayOptions {
      */
     replay?: false | 'prefer' | 'missing-only'
   }
+  /**
+   * Opt OUT of TypeScript declaration generation. By default the plugin derives and writes the one
+   * generated `src/plates/xray-env.gen.d.ts` (ADR 0032): the wildcard reference plus a declare
+   * block per fixture-bearing plate typing its virtual module as `Plate<typeof
+   * import('./<name>').fixture>`, so the consumer's own compiler flags a `data`-type change the
+   * committed Fixture no longer satisfies (the `FixtureOutOfDate` error at the `<Skeleton>` site);
+   * the default `platesDir` sits inside the standard tsconfig `include: ["src"]`, so the check is
+   * live with no tsconfig edits (a `files`-only tsconfig or a custom Vite `root` lists the
+   * directory itself). Top-level rather than a `fixtures` sub-option because typegen is xray's
+   * general TS integration — one switch, one generated file. Set `true` to keep a drift error from
+   * blocking a build when re-recording has to wait. The switch stops xray WRITING the file; a
+   * previously committed `xray-env.gen.d.ts` stays in the program until deleted from the tree.
+   * Default: `false`.
+   */
+  noTypes?: boolean
 }
 
 const RESOLVED_PREFIX = `\0${VIRTUAL_PREFIX}`
 const BOOT_ID = 'virtual:xray/client'
 const RESOLVED_BOOT_ID = `\0${BOOT_ID}`
+/**
+ * The dev-only module that imports the `fixture` export of every fixture-bearing plate module under
+ * `platesDir` and seeds the fixtures store with the LIVE values (ADR 0033/0034) — replay data rides
+ * the module graph, not a devalue wire. Self-accepting, so editing a plate module HMRs straight
+ * into a running Replay.
+ */
+const FIXTURES_ID = 'virtual:xray/fixtures'
+const RESOLVED_FIXTURES_ID = `\0${FIXTURES_ID}`
 const ENDPOINT = '/__xray'
 
 /**
@@ -141,7 +172,7 @@ const plateCssId = (name: string): string => `${VIRTUAL_PREFIX}${name}.css`
  *   writes Plate files, and hot-updates the page.
  */
 export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
-  const platesDir = options.platesDir ?? 'plates'
+  const platesDir = options.platesDir ?? 'src/plates'
   const capture = options.capture ?? false
   const delay = options.delay ?? 200
   const settleCap = options.settleCap ?? 5_000
@@ -152,13 +183,14 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
   // defaults off.
   const recordMode = options.fixtures?.record ?? 'manual'
   const replayMode = options.fixtures?.replay ?? false
+  const fixtureTypes = !options.noTypes
   let root = process.cwd()
 
-  const platePath = (name: string) => resolve(root, platesDir, `${name}.json`)
-  // The Fixture sidecar sits NEXT TO the Plate (`<name>.json` ↔
-  // `<name>.fixture.json`, 1:1) but is never merged into it: the Plate stays
-  // purely structural (ADR 0015).
-  const fixturePath = (name: string) => resolve(root, platesDir, `${name}.fixture.json`)
+  // One module per Plate (ADR 0034): the StoredPlate structure as the default
+  // export, the recorded Fixture (if any) as `export const fixture`. All
+  // generated ambient declarations live in the one env file (`envPath`).
+  const platePath = (name: string) => resolve(root, platesDir, `${name}.ts`)
+  const envPath = () => resolve(root, platesDir, 'xray-env.gen.d.ts')
 
   const data: Plugin = {
     name: 'xray:data',
@@ -176,7 +208,7 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
       if (id.startsWith(VIRTUAL_PREFIX)) return `\0${id}`
       return undefined
     },
-    load(id) {
+    async load(id) {
       if (id === BASE_CSS_ID) return BASE_CSS
       if (id.startsWith(VIRTUAL_PREFIX) && id.endsWith('.css')) {
         const name = id.slice(VIRTUAL_PREFIX.length, -'.css'.length)
@@ -185,8 +217,8 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
         // module below: a capture writes this file, and watching it would make
         // Vite reload the module — an infinite capture loop. Dev updates are
         // pushed instead via `configureServer`'s invalidation below.
-        const stored = readStoredPlate(platePath(name))
-        return stored?.css ?? ''
+        const { plate } = await importPlateSource(platePath(name))
+        return plate?.css ?? ''
       }
       if (!id.startsWith(RESOLVED_PREFIX)) return undefined
       const name = id.slice(RESOLVED_PREFIX.length)
@@ -196,7 +228,8 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
       // and re-firing the capture, an infinite loop. Live updates are pushed
       // in place over the `xray:plate` HMR event instead; the read here
       // only seeds the committed plate on a fresh load.
-      return renderPlateModule(readStoredPlate(platePath(name)) ?? emptyPlate(name), name)
+      const { plate } = await importPlateSource(platePath(name))
+      return renderPlateModule(plate ?? emptyPlate(name), name)
     },
   }
 
@@ -241,52 +274,84 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
     },
     resolveId(id) {
       if (id === BOOT_ID) return RESOLVED_BOOT_ID
+      if (id === FIXTURES_ID) return RESOLVED_FIXTURES_ID
       return undefined
     },
     load(id) {
+      if (id === RESOLVED_FIXTURES_ID) return fixturesModule(resolve(root, platesDir), platesDir)
       if (id !== RESOLVED_BOOT_ID) return undefined
       return bootstrapCode(delay, settleCap, collect, hud, capture, recordMode, replayMode)
     },
     configureServer(server) {
-      // Push the merged plate in place when a plate file changes outside the
-      // POST endpoint — a git checkout or a hand edit — so it hot-swaps like a
+      // Push the merged plate in place when a plate module changes outside the
+      // POST endpoints — a git checkout or a hand edit — so it hot-swaps like a
       // capture does. (Our own POST writes also fire this; the client dedupes
       // identical plates, so the announce duplicate is a no-op, and the
       // repeated invalidation below is idempotent.)
       const dir = () => resolve(root, platesDir)
+      // The env file (ADR 0032/0034): one generated d.ts whose triple-slash
+      // reference wires the `virtual:xray/plates/*` wildcard with zero tsconfig
+      // edits and whose per-plate declarations carry each recorded Fixture's
+      // type. Fully derived from the directory, so it regenerates on boot and
+      // on every plate-module event below. `noTypes` (the one switch over all
+      // of xray's declaration generation) stops xray writing or updating it.
+      const regenEnv = fixtureTypes
+        ? () => regenerateEnvFile(dir(), envPath())
+        : () => Promise.resolve()
+      void regenEnv()
       server.watcher.add(dir())
-      const onPlateFile = (file: string) => {
-        if (!file.startsWith(dir()) || !file.endsWith('.json')) return
-        const name = relative(dir(), file).slice(0, -'.json'.length)
+      // One watcher handler for the one file kind (ADR 0034 §5). The fixtures
+      // virtual module enumerates plate modules at LOAD time and Vite caches
+      // the transform forever (a virtual id has no file to watch) — without
+      // the invalidation, a Fixture recorded or hand-created after boot stays
+      // invisible until a server restart. Files already in the graph
+      // hot-update natively through the module's self-accept.
+      const onPlateModule = (file: string, removed: boolean) => {
+        if (!file.startsWith(dir()) || !file.endsWith('.ts') || file.endsWith('.d.ts')) return
+        const name = relative(dir(), file).slice(0, -'.ts'.length)
         if (!isValidPlateName(name)) return
-        announcePlate(server.ws, name, readStoredPlate(file))
-        // Keep BOTH virtual modules in sync with the changed file: without the
-        // invalidation, a hand edit / git checkout announces to the live store
-        // but leaves Vite's cached transforms stale, so the NEXT page load
-        // serves an old tree regardless of what is on disk. Same treatment as
-        // the capture POST path.
+        // A hand edit can land inside the same millisecond as the previous
+        // read; the revision component of the import key covers what mtime
+        // alone cannot.
+        bumpFileRev(file)
+        const fixturesMod = server.moduleGraph?.getModuleById(RESOLVED_FIXTURES_ID)
+        if (fixturesMod) {
+          server.moduleGraph?.invalidateModule(fixturesMod)
+          // Invalidation alone only marks the cached transform stale — nothing
+          // re-executes it in an OPEN tab, so a Fixture added to a previously
+          // fixtureless module (or deleted) would wait for the next page load.
+          // The module self-accepts, so the reload re-runs the seed in place.
+          void server.reloadModule?.(fixturesMod)
+        }
+        // Keep the plate's virtual modules in sync with the changed file:
+        // without the invalidation, a hand edit / git checkout announces to
+        // the live store but leaves Vite's cached transforms stale, so the
+        // NEXT page load serves an old tree regardless of what is on disk.
         void invalidatePlateModules(server, name)
+        void regenEnv()
+        if (removed) {
+          // Clear the live store and Coverage: mounted clients must not keep
+          // rendering a Plate whose module is gone.
+          announcePlate(server.ws, name, null)
+          return
+        }
+        void importPlateSource(file).then(({ plate }) => {
+          if (plate) announcePlate(server.ws, name, plate)
+        })
       }
-      server.watcher.on('add', onPlateFile)
-      server.watcher.on('change', onPlateFile)
+      server.watcher.on('add', (file: string) => onPlateModule(file, false))
+      server.watcher.on('change', (file: string) => onPlateModule(file, false))
+      server.watcher.on('unlink', (file: string) => onPlateModule(file, true))
       server.middlewares.use(ENDPOINT, (req, res) => {
         // GET /__xray/coverage → per-plate breakpoints + captured spans from disk.
         if (req.method === 'GET' && req.url === '/coverage') {
-          res.setHeader('content-type', 'application/json')
-          res.end(JSON.stringify(readCoverage(dir())))
+          void readCoverage(dir()).then((coverage) => {
+            res.setHeader('content-type', 'application/json')
+            res.end(JSON.stringify(coverage))
+          })
           return
         }
-        // GET /__xray/fixtures → all recorded Fixtures as `{ name: devalueString }`
-        // (ADR 0015). The node side stores/serves the OPAQUE devalue string and
-        // never parses `data` itself; the browser dev client (which has the live
-        // runtime) owns the devalue parse. The Fixtures are a dev-only sidecar,
-        // separate from the Plate files coverage reads.
-        if (req.method === 'GET' && req.url === '/fixtures') {
-          res.setHeader('content-type', 'application/json')
-          res.end(JSON.stringify(readFixtures(dir())))
-          return
-        }
-        // Both write paths (Plate capture, Fixture sidecar) put files in the
+        // Both write paths (Plate capture, Fixture record) put files in the
         // consumer's working tree — refuse a browser POST whose Origin is not
         // this dev server. Non-browser clients (no Origin header) stay allowed.
         if (req.method === 'POST' && !isSameOriginWrite(req)) {
@@ -297,15 +362,15 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
           console.warn('[xray] rejected a cross-origin POST to /__xray (origin/host mismatch).')
           return
         }
-        // POST /__xray/fixture → write a recorded Fixture sidecar (ADR 0015),
-        // reusing the capture endpoint's body-reading/validation discipline but
-        // treating the devalue payload as opaque text (never eval/parse it
-        // server-side).
+        // POST /__xray/fixture → upsert the Fixture into the plate MODULE
+        // (ADR 0034), reusing the capture endpoint's body-reading/validation
+        // discipline. The devalue payload is read as STRUCTURE only — value
+        // literals in, module text out, nothing revived server-side.
         if (req.url === '/fixture') {
-          handleFixturePost(req, res, fixturePath)
+          void handleFixturePost(req, res, platePath)
           return
         }
-        handleCapturePost(req, res, server, platePath)
+        void handleCapturePost(req, res, server, platePath)
       })
     },
   }
@@ -339,17 +404,21 @@ function bootstrapCode(
     // commits); `replay` defaults off.
     `  record: ${JSON.stringify(recordMode)},`,
     `  replay: ${JSON.stringify(replayMode)},`,
-    // POST a recorded Fixture's OPAQUE devalue string to its sidecar. The client
-    // owns the devalue stringify (it has the live `data`); the node side treats
-    // the payload as opaque text (ADR 0015). Rejects on a non-2xx so the HUD's
-    // Record button surfaces a failed write.
+    // POST a recorded Fixture's devalue payload. The client owns the devalue
+    // stringify (it has the live `data`); the server reads the payload as
+    // structure and renders the fixture module's text, never reviving values
+    // (ADR 0033). Rejects on a non-2xx — with the response body, which carries
+    // the renderer's refusal reason — so the HUD surfaces WHY a write failed.
     '  recordFixtureSink(payload) {',
     `    return fetch('${ENDPOINT}/fixture', {`,
     "      method: 'POST',",
     "      headers: { 'content-type': 'application/json' },",
     '      body: JSON.stringify(payload),',
     '    }).then((response) => {',
-    "      if (!response.ok) throw new Error('xray fixture POST failed: ' + response.status)",
+    '      if (response.ok) return',
+    '      return response.text().then((body) => {',
+    "        throw new Error('xray fixture POST failed: ' + response.status + (body ? ' — ' + body : ''))",
+    '      })',
     '    })',
     '  },',
     // POST the `{ plate: StoredPlate, diagnostics? }` envelope (ADR 0022):
@@ -394,14 +463,12 @@ function bootstrapCode(
     '    for (const [name, c] of Object.entries(coverage)) globalThis.__XRAY__?.coverage?.set(name, c)',
     '  })',
     '  .catch(() => {})',
-    // Seed recorded Fixtures (ADR 0015) from the committed sidecars on disk: the
-    // server returns `{ name: devalueString }` (opaque), and the client parses
-    // each with devalue before storing, so Replay and the HUD coverage marker
-    // reflect what's on disk, not just this session.
-    `void fetch('${ENDPOINT}/fixtures')`,
-    '  .then((response) => response.json())',
-    '  .then((fixtures) => { globalThis.__XRAY__?.fixtures?.seed?.(fixtures) })',
-    '  .catch(() => {})',
+    // Load recorded Fixtures through the module graph (ADR 0033/0034): the
+    // virtual module imports every fixture-bearing plate module and seeds the
+    // store with LIVE values.
+    // Dynamic (not hoisted) so it runs AFTER installXrayClient; failures stay
+    // isolated from boot.
+    "void import('virtual:xray/fixtures').catch(() => {})",
     // Hot-swap a plate in place when the plugin announces a new one (rather than
     // reloading the module, which would remount and re-capture), and refresh its
     // coverage from disk so the HUD updates.
@@ -594,130 +661,135 @@ function announcePlate(ws: PlateBroadcaster, name: string, stored: StoredPlate |
       name,
       plate: serializePlate(merged),
       breakpoints,
-      spans: spansFromBreakpoints(breakpoints),
+      // A null announce (a deleted plate module) must CLEAR Coverage: empty
+      // spans, not the open all-widths band `spansFromBreakpoints([])` yields.
+      spans: stored ? spansFromBreakpoints(breakpoints) : [],
     },
   })
 }
 
 /**
- * Per-plate breakpoints + captured coverage bands, read from the committed StoredPlate files.
- * `spans` come from the plate itself (ADR 0029: the bands actually captured); a legacy plate
- * without the field derives complete spans from its `breakpoints` (the historical sweep-only
- * assumption) until a re-capture writes the truth.
+ * Per-plate breakpoints + captured coverage bands, read from the committed plate modules. `spans`
+ * come from the plate itself (ADR 0029: the bands actually captured); a plate without the field
+ * derives complete spans from its `breakpoints` (the historical sweep-only assumption) until a
+ * re-capture writes the truth.
  *
  * @internal
  */
-export function readCoverage(
+export async function readCoverage(
   dir: string,
-): Record<string, { breakpoints: number[]; spans: Span[] }> {
+): Promise<Record<string, { breakpoints: number[]; spans: Span[] }>> {
   const out: Record<string, { breakpoints: number[]; spans: Span[] }> = {}
-  let entries: string[]
-  try {
-    entries = readdirSync(dir, { recursive: true, encoding: 'utf8' })
-  } catch {
-    return out
-  }
-  for (const entry of entries) {
-    const rel = entry.replaceAll('\\', '/')
-    if (!rel.endsWith('.json')) continue
-    const name = rel.slice(0, -'.json'.length)
-    if (!isValidPlateName(name)) continue
-    const stored = readStoredPlate(resolve(dir, rel))
-    if (!stored) continue
-    const breakpoints = stored.breakpoints ?? []
+  for (const [name, { plate }] of await importPlateSources(dir)) {
+    if (!plate) continue
+    const breakpoints = plate.breakpoints ?? []
     // Stored spans are the CAPTURED bands (ADR 0029) — a partial session reports
     // only what it touched. Plates written before the field existed fall back to
     // the historical complete-coverage assumption until a re-capture.
-    out[name] = { breakpoints, spans: stored.spans ?? spansFromBreakpoints(breakpoints) }
+    out[name] = { breakpoints, spans: plate.spans ?? spansFromBreakpoints(breakpoints) }
   }
   return out
 }
 
 /**
- * The on-disk Fixture sidecar shape (ADR 0015): version, plate name, and the OPAQUE devalue string.
- * The node side never parses `data` — it is the browser dev client's job (it has the live
- * runtime).
+ * Every plate module under `dir`, imported (`importPlateSource`) and paired with its plate name, in
+ * sorted name order. The `import()` reads are independent, so they run in parallel.
  */
-const FIXTURE_VERSION = 1
-const FIXTURE_SUFFIX = '.fixture.json'
-
-/**
- * A recorded Fixture sidecar — `data` is the verbatim devalue string, treated as opaque text
- * server-side.
- */
-function isFixtureFile(value: unknown): value is { v: number; name: string; data: string } {
-  return (
-    isRecord(value) &&
-    typeof value.v === 'number' &&
-    typeof value.name === 'string' &&
-    typeof value.data === 'string'
+async function importPlateSources(
+  dir: string,
+): Promise<[string, Awaited<ReturnType<typeof importPlateSource>>][]> {
+  const names = plateModuleNames(dir)
+  const sources = await Promise.all(
+    names.map((name) => importPlateSource(resolve(dir, `${name}.ts`))),
   )
+  return names.map((name, i) => [name, sources[i]!])
+}
+
+/** The fixture-bearing plate names under `dir`, from the modules' own `fixture` exports. */
+async function fixtureBearingNames(dir: string): Promise<string[]> {
+  const entries = await importPlateSources(dir)
+  return entries.filter(([, source]) => source.hasFixture).map(([name]) => name)
 }
 
 /**
- * All recorded Fixtures as `{ <name>: <devalueString> }`, read from the `<name>.fixture.json`
- * sidecars (ADR 0015). The map values are the OPAQUE devalue strings exactly as written — the node
- * side never parses them; the browser dev client owns the devalue decode. The `.fixture.json`
- * suffix keeps these distinct from Plate files (`isValidPlateName` rejects the dotted name, so
- * `readCoverage` never picks them up — Fixtures never leak into Plate coverage).
- *
- * @internal
+ * The plate-module basenames under `dir`, as plate names (ADR 0034). The dot rule does the
+ * filtering: every sidecar carries a dotted suffix (`.gen.d.ts`, `.d.ts`), and `isValidPlateName`
+ * rejects dotted stems, so a plain `<name>.ts` is a plate module and nothing else is.
  */
-export function readFixtures(dir: string): Record<string, string> {
-  const out: Record<string, string> = {}
+function plateModuleNames(dir: string): string[] {
   let entries: string[]
   try {
     entries = readdirSync(dir, { recursive: true, encoding: 'utf8' })
   } catch {
-    return out
+    return []
   }
+  const names: string[] = []
   for (const entry of entries) {
     const rel = entry.replaceAll('\\', '/')
-    if (!rel.endsWith(FIXTURE_SUFFIX)) continue
-    const name = rel.slice(0, -FIXTURE_SUFFIX.length)
-    if (!isValidPlateName(name)) continue
-    let raw: string
-    try {
-      raw = readFileSync(resolve(dir, rel), 'utf8')
-    } catch {
-      continue
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw)
-      // The wrapper is JSON the node side parses; the `data` field stays the
-      // opaque devalue string. A version mismatch or wrong shape is skipped — a
-      // hand-broken sidecar should not break the seed.
-      if (isFixtureFile(parsed) && parsed.v === FIXTURE_VERSION) out[name] = parsed.data
-    } catch {
-      // Corrupt JSON — skip; the developer can re-record.
-    }
+    if (!rel.endsWith('.ts') || rel.endsWith('.d.ts')) continue
+    const name = rel.slice(0, -'.ts'.length)
+    if (isValidPlateName(name)) names.push(name)
   }
-  return out
+  return names.toSorted()
 }
 
 /**
- * Write a recorded Fixture sidecar (ADR 0015). Reuses the capture endpoint's front-door checks
- * (method, content type, declared/streamed size cap) and the `isValidPlateName` gate, but treats
- * the devalue `data` payload as OPAQUE TEXT: it is validated only as a string and written verbatim,
- * never eval'd or parsed server-side. The sidecar lives NEXT TO the Plate but is never merged into
- * it, so the persisted Plate stays purely structural.
- *
- * @internal
+ * The `virtual:xray/fixtures` module (ADR 0033/0034): imports the `fixture` export of every
+ * fixture-bearing plate module through the module graph and seeds the fixtures store with the LIVE
+ * values — no devalue decode, real `Date`/`Map` objects, and the transform pipeline the rest of the
+ * app already uses. Self-accepting so a plate-module edit re-runs the seed with `force` (the disk
+ * is the fresher truth on an HMR re-seed); a NEWLY recorded fixture is already live in the store
+ * via Record itself, and joins the import list on the next page load. Which modules bear a fixture
+ * is known from the server's own `import()` reads. Dev-only: nothing imports this in a production
+ * build.
  */
-export function handleFixturePost(
-  req: CaptureRequest,
-  res: CaptureResponse,
-  fixturePath: (name: string) => string,
-): void {
+async function fixturesModule(dir: string, platesDir: string): Promise<string> {
+  const names = await fixtureBearingNames(dir)
+  const imports = names.map(
+    (name, i) => `import { fixture as f${i} } from ${JSON.stringify(`/${platesDir}/${name}.ts`)}`,
+  )
+  const entries = names.map((name, i) => `  ${JSON.stringify(name)}: f${i},`)
+  return [
+    ...imports,
+    'const values = {',
+    ...entries,
+    '}',
+    'globalThis.__XRAY__?.fixtures?.seed?.(values, true)',
+    'if (import.meta.hot) import.meta.hot.accept()',
+    '',
+  ].join('\n')
+}
+
+/**
+ * Derive and write the env file from the plates directory: scan the plate modules, declare every
+ * fixture-bearing one. Skips the write when the rendered content already matches disk, so the
+ * watcher (whose handler ignores `.d.ts` files anyway) can call this on every plate-module event
+ * without churn.
+ */
+async function regenerateEnvFile(dir: string, file: string): Promise<void> {
+  const text = renderEnvFile(await fixtureBearingNames(dir))
+  if (existsSync(file) && readFileSync(file, 'utf8') === text) return
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, text)
+}
+
+/**
+ * Front door shared by both POST endpoints: method, content type, and declared size are cheap
+ * checks that reject anything that is not the JSON POST the dev client makes BEFORE buffering a
+ * single byte; the streamed cap catches a lying or absent `content-length`. Resolves to the
+ * buffered body, or `null` when a rejection response was already sent. Messages stay generic (ADR
+ * 0023).
+ */
+function readJsonPost(req: CaptureRequest, res: CaptureResponse): Promise<string | null> {
   if (req.method !== 'POST') {
     res.statusCode = 405
     res.end()
-    return
+    return Promise.resolve(null)
   }
   if (!isJsonContentType(req.headers?.['content-type'])) {
     res.statusCode = 415
     res.end('unsupported media type')
-    return
+    return Promise.resolve(null)
   }
   const declared = Number(
     Array.isArray(req.headers?.['content-length'])
@@ -727,159 +799,213 @@ export function handleFixturePost(
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     res.statusCode = 413
     res.end('payload too large')
-    return
+    return Promise.resolve(null)
   }
-  let body = ''
-  let bytes = 0
-  let aborted = false
-  req.on('data', (chunk) => {
-    if (aborted) return
-    const text = typeof chunk === 'string' ? chunk : (chunk?.toString() ?? '')
-    bytes += Buffer.byteLength(text)
-    if (bytes > MAX_BODY_BYTES) {
-      aborted = true
-      res.statusCode = 413
-      res.end('payload too large')
-      req.destroy?.()
-      return
-    }
-    body += text
-  })
-  req.on('end', () => {
-    if (aborted) return
-    try {
-      const raw: unknown = JSON.parse(body)
-      // The POST envelope is `{ name, data }`: `name` gates through the same
-      // isValidPlateName rule as every other path, and `data` is the opaque
-      // devalue string (a string is all that is checked — its CONTENT is the client's
-      // devalue output, never parsed here). A generic 400 on any failure.
-      if (
-        !isRecord(raw) ||
-        typeof raw.name !== 'string' ||
-        !isValidPlateName(raw.name) ||
-        typeof raw.data !== 'string'
-      ) {
-        res.statusCode = 400
-        res.end('invalid fixture payload')
+  return new Promise((resolvePromise) => {
+    let body = ''
+    let bytes = 0
+    let aborted = false
+    req.on('data', (chunk) => {
+      if (aborted) return
+      const text = typeof chunk === 'string' ? chunk : (chunk?.toString() ?? '')
+      // Count BYTES, not chars: a multi-byte body must not slip the cap. Once
+      // over, stop accumulating and tear the request down so an oversized body
+      // is never held in memory even if `content-length` lied or was absent.
+      bytes += Buffer.byteLength(text)
+      if (bytes > MAX_BODY_BYTES) {
+        aborted = true
+        res.statusCode = 413
+        res.end('payload too large')
+        req.destroy?.()
+        resolvePromise(null)
         return
       }
-      const file = fixturePath(raw.name)
-      const sidecar = { v: FIXTURE_VERSION, name: raw.name, data: raw.data }
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, `${JSON.stringify(sidecar, null, 1)}\n`)
-      res.statusCode = 204
-      res.end()
-    } catch {
+      body += text
+    })
+    req.on('end', () => {
+      if (!aborted) resolvePromise(body)
+    })
+  })
+}
+
+/**
+ * Per-file promise chains serializing the read-render-write upserts (ADR 0034 §4): a concurrent
+ * Capture and Record of the same plate would otherwise both import the old module and the later
+ * write would discard the other's half. `fileRevs` is the same-millisecond complement — see
+ * `importPlateSource`.
+ */
+const writeLocks = new Map<string, Promise<void>>()
+const fileRevs = new Map<string, number>()
+
+function bumpFileRev(file: string): void {
+  fileRevs.set(file, (fileRevs.get(file) ?? 0) + 1)
+}
+
+function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
+  const prev = writeLocks.get(file) ?? Promise.resolve()
+  const run = prev.then(fn)
+  writeLocks.set(
+    file,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  )
+  return run
+}
+
+/**
+ * Upsert a recorded Fixture into the plate MODULE (ADR 0034). The devalue payload is read as
+ * STRUCTURE only — value literals in, module text out, nothing revived — and the plate half is read
+ * back through `importPlateSource`, so the whole file re-renders with the plate preserved. The env
+ * file regenerates through the watcher event this write fires.
+ *
+ * @internal
+ */
+export async function handleFixturePost(
+  req: CaptureRequest,
+  res: CaptureResponse,
+  platePath: (name: string) => string,
+): Promise<void> {
+  const body = await readJsonPost(req, res)
+  if (body === null) return
+  try {
+    const raw: unknown = JSON.parse(body)
+    // The POST envelope is `{ name, data }`: `name` gates through the same
+    // isValidPlateName rule as every other path, and `data` is the client's
+    // devalue payload — parsed here as plain JSON and rendered to module TEXT,
+    // never revived (ADR 0033/0034). A generic 400 on any failure, including
+    // payloads the renderer refuses.
+    if (
+      !isRecord(raw) ||
+      typeof raw.name !== 'string' ||
+      !isValidPlateName(raw.name) ||
+      typeof raw.data !== 'string'
+    ) {
       res.statusCode = 400
       res.end('invalid fixture payload')
-    }
-  })
-}
-
-/**
- * Validate a posted `StoredPlate` envelope, write it AS-IS, and hot-swap the plate in place. The
- * dev client posts a finished StoredPlate (the whole Plate already projected in the browser, ADR
- * 0022) inside a `{ plate, diagnostics? }` envelope; there is NO server-side accumulation/merge.
- * `diagnostics` is a SIBLING field the server logs and then drops; it never reaches the stored
- * artifact (ADR 0008).
- *
- * @internal
- */
-export function handleCapturePost(
-  req: CaptureRequest,
-  res: CaptureResponse,
-  server: CaptureServer,
-  platePath: (name: string) => string,
-): void {
-  // Method, content type, and declared size are cheap front-door checks: reject
-  // anything that is not the JSON POST the capture client makes BEFORE buffering
-  // a single byte. Messages stay generic (ADR 0023).
-  if (req.method !== 'POST') {
-    res.statusCode = 405
-    res.end()
-    return
-  }
-  if (!isJsonContentType(req.headers?.['content-type'])) {
-    res.statusCode = 415
-    res.end('unsupported media type')
-    return
-  }
-  const declared = Number(
-    Array.isArray(req.headers?.['content-length'])
-      ? req.headers['content-length'][0]
-      : req.headers?.['content-length'],
-  )
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    res.statusCode = 413
-    res.end('payload too large')
-    return
-  }
-  let body = ''
-  let bytes = 0
-  let aborted = false
-  req.on('data', (chunk) => {
-    if (aborted) return
-    const text = typeof chunk === 'string' ? chunk : (chunk?.toString() ?? '')
-    // Count BYTES, not chars: a multi-byte body must not slip the cap. Once over,
-    // stop accumulating and tear the request down so an oversized body is never
-    // held in memory even if `content-length` lied or was absent.
-    bytes += Buffer.byteLength(text)
-    if (bytes > MAX_BODY_BYTES) {
-      aborted = true
-      res.statusCode = 413
-      res.end('payload too large')
-      req.destroy?.()
       return
     }
-    body += text
-  })
-  req.on('end', () => {
-    if (aborted) return
-    try {
-      const raw: unknown = JSON.parse(body)
-      // The POST envelope is `{ plate: StoredPlate, diagnostics? }`. Validate the
-      // `plate` with valibot (validate.ts): plate name, the post-classify
-      // RenderNode tree, and the already-classified css blob (guarded for
-      // `<style>`-breakout). `null` on any failure → a generic 400 that never
-      // echoes the payload or its CSS. `diagnostics` is a sibling field — logged
-      // below, never stored (ADR 0008).
-      const envelope = isRecord(raw) ? raw : undefined
-      const stored = parseStoredPlate(envelope?.plate)
-      if (!stored) {
-        res.statusCode = 400
-        res.end('invalid capture payload')
-        return
-      }
-      // Print the capture's dev-only diagnostics to the server output, the same
-      // text the browser logged (diagnostics.ts). They ride in the envelope's
-      // sibling `diagnostics` field, NOT in the StoredPlate, so they never reach
-      // disk (ADR 0008). Validate them loosely (a known-code array) before logging.
-      reportServerDiagnostics(server, stored.name, validEnvelopeDiagnostics(envelope?.diagnostics))
-      const file = platePath(stored.name)
-      const { stored: existing, invalid } = loadStoredPlate(file)
-      // An EXISTING-but-unreadable committed plate (corrupt JSON, wrong shape, or
-      // a version mismatch) is otherwise silently treated as absent — warn so the
-      // dropped coverage is explained. The reason names the file only; never the
-      // payload or any CSS/text content.
-      if (invalid) {
-        reportServerDiagnostics(server, stored.name, [
-          makeDiagnostic('invalid-plate-file', { detail: `${stored.name}.json` }),
-        ])
-      }
-      // Write the StoredPlate AS-IS — the client already projected the whole
-      // Plate (no server-side merge/accumulation). Skip an unchanged write so the
-      // file's mtime (and the watcher it would wake) stays put.
-      const serialized = `${JSON.stringify(stored, null, 1)}\n`
-      if (existing !== null && `${JSON.stringify(existing, null, 1)}\n` === serialized) {
+    // Narrowings on `raw` do not survive into the lock closure; bind them.
+    const name = raw.name
+    const file = platePath(name)
+    const fixturePayload = JSON.parse(raw.data) as unknown
+    // The read of the plate half and the write of the whole module must not
+    // interleave with a concurrent Capture upsert of the same file (ADR 0034
+    // §4): both would import the old module and the later write would discard
+    // the other's half. The per-file lock serializes them.
+    await withFileLock(file, async () => {
+      const { plate } = await importPlateSource(file)
+      const moduleText = renderPlateSourceModule({ plate, fixturePayload })
+      // Skip an unchanged write so the file's mtime (and the watcher it would
+      // wake) stays put — a re-record of identical data is a no-op.
+      if (existsSync(file) && readFileSync(file, 'utf8') === moduleText) {
         res.statusCode = 204
         res.end()
         return
       }
-      if (serialized.length > MAX_PLATE_BYTES) {
+      const moduleBytes = Buffer.byteLength(moduleText)
+      if (moduleBytes > MAX_PLATE_BYTES) {
+        // Shared references inline as duplicates (ADR 0033 §2), so a small
+        // payload can render far past its wire size; the module cap applies
+        // to this write path the same as to Capture.
+        console.warn(
+          `[xray] not writing the "${name}" Fixture: ${Math.round(moduleBytes / 1000)}KB exceeds the cap.`,
+        )
+        res.statusCode = 413
+        res.end('fixture too large')
+        return
+      }
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, moduleText)
+      bumpFileRev(file)
+      res.statusCode = 204
+      res.end()
+    })
+  } catch (error) {
+    // The renderer's refusals are exact ("unsupported fixture value type: …")
+    // and the POST is the only place the user learns them — typed arrays, for
+    // one, pass the client-side stringify gate. Put the reason in the body.
+    res.statusCode = 400
+    const reason = error instanceof Error ? error.message : 'invalid fixture payload'
+    res.end(`invalid fixture payload: ${reason}`)
+  }
+}
+
+/**
+ * Validate a posted `StoredPlate` envelope, upsert it into the plate MODULE, and hot-swap the plate
+ * in place. The dev client posts a finished StoredPlate (the whole Plate already projected in the
+ * browser, ADR 0022) inside a `{ plate, diagnostics? }` envelope; there is NO server-side
+ * accumulation/merge. `diagnostics` is a SIBLING field the server logs and then drops; it never
+ * reaches the stored artifact (ADR 0008). An existing Fixture is read back as a live value and
+ * re-serialized into the re-rendered module (ADR 0034 §4) — value edits survive, formatting and
+ * comments do not.
+ *
+ * @internal
+ */
+export async function handleCapturePost(
+  req: CaptureRequest,
+  res: CaptureResponse,
+  server: CaptureServer,
+  platePath: (name: string) => string,
+): Promise<void> {
+  const body = await readJsonPost(req, res)
+  if (body === null) return
+  try {
+    const raw: unknown = JSON.parse(body)
+    // The POST envelope is `{ plate: StoredPlate, diagnostics? }`. Validate the
+    // `plate` with valibot (validate.ts): plate name, the post-classify
+    // RenderNode tree, and the already-classified css blob (guarded for
+    // `<style>`-breakout). `null` on any failure → a generic 400 that never
+    // echoes the payload or its CSS. `diagnostics` is a sibling field — logged
+    // below, never stored (ADR 0008).
+    const envelope = isRecord(raw) ? raw : undefined
+    const stored = parseStoredPlate(envelope?.plate)
+    if (!stored) {
+      res.statusCode = 400
+      res.end('invalid capture payload')
+      return
+    }
+    // Print the capture's dev-only diagnostics to the server output, the same
+    // text the browser logged (diagnostics.ts). They ride in the envelope's
+    // sibling `diagnostics` field, NOT in the StoredPlate, so they never reach
+    // disk (ADR 0008). Validate them loosely (a known-code array) before logging.
+    reportServerDiagnostics(server, stored.name, validEnvelopeDiagnostics(envelope?.diagnostics))
+    const file = platePath(stored.name)
+    // The fixture-half read and the whole-module write serialize against any
+    // concurrent Record of the same file — see handleFixturePost.
+    await withFileLock(file, async () => {
+      const existing = await importPlateSource(file)
+      // An EXISTING-but-unreadable committed plate module (a broken import or
+      // an invalid plate export) is otherwise silently treated as absent —
+      // warn so the dropped coverage is explained. The reason names the file
+      // only; never the payload or any CSS/text content.
+      if (existing.invalid) {
+        reportServerDiagnostics(server, stored.name, [
+          makeDiagnostic('invalid-plate-file', { detail: `${stored.name}.ts` }),
+        ])
+      }
+      // Re-render the WHOLE module: the new plate plus the existing Fixture,
+      // re-serialized from the live value the import handed back (ADR 0034
+      // §4). A hand-edited fixture that devalue cannot serialize refuses the
+      // capture loudly rather than silently dropping the Fixture.
+      const fixturePayload = existing.hasFixture
+        ? (JSON.parse(devalueStringify(existing.fixture)) as unknown)
+        : undefined
+      const serialized = renderPlateSourceModule({ plate: stored, fixturePayload })
+      // Skip an unchanged write so the file's mtime (and the watcher it would
+      // wake) stays put.
+      if (existsSync(file) && readFileSync(file, 'utf8') === serialized) {
+        res.statusCode = 204
+        res.end()
+        return
+      }
+      const serializedBytes = Buffer.byteLength(serialized)
+      if (serializedBytes > MAX_PLATE_BYTES) {
         // Refuse to commit a monster: a plate this big means the <Skeleton>
         // sits too high. (The per-capture node guard catches most of these.)
         console.warn(
-          `[xray] not writing "${stored.name}": ${Math.round(serialized.length / 1000)}KB exceeds the cap.`,
+          `[xray] not writing "${stored.name}": ${Math.round(serializedBytes / 1000)}KB exceeds the cap.`,
           'The <Skeleton> likely sits too high in the tree.',
         )
         res.statusCode = 413
@@ -888,25 +1014,27 @@ export function handleCapturePost(
       }
       mkdirSync(dirname(file), { recursive: true })
       writeFileSync(file, serialized)
+      bumpFileRev(file)
       announcePlate(server.ws, stored.name, stored)
       // Drop BOTH of the plate's virtual modules from Vite's transform cache
       // (css reloaded live over CSS-HMR; the JS tree invalidated only, so the
       // NEXT page load re-transforms from disk — see `invalidatePlateModules`
-      // for why the policies split and the garbled-skeleton failure a css-only
-      // invalidation causes). Fire-and-forget: the response should
+      // for why the policies split and the garbled-skeleton failure a
+      // css-only invalidation causes). Fire-and-forget: the response should
       // not wait on a dev-only HMR push, and a failure here has no
       // user-visible failure mode beyond "the next full reload picks up the
       // fresh modules".
       void invalidatePlateModules(server, stored.name)
       res.statusCode = 204
       res.end()
-    } catch {
-      // A JSON parse failure (or any other fault). Stay generic — never reflect
-      // the parser's message or the posted body back to the client.
-      res.statusCode = 400
-      res.end('invalid capture payload')
-    }
-  })
+    })
+  } catch {
+    // A JSON parse failure, an unserializable hand-edited fixture, or any
+    // other fault. Stay generic — never reflect the parser's message or the
+    // posted body back to the client.
+    res.statusCode = 400
+    res.end('invalid capture payload')
+  }
 }
 
 /**
@@ -935,34 +1063,56 @@ function validEnvelopeDiagnostics(value: unknown): CaptureDiagnostic[] | undefin
 }
 
 /**
- * Read and validate a committed StoredPlate, distinguishing "no file" from "file present but
- * unreadable". `invalid` is true ONLY when the file exists but is corrupt JSON, the wrong shape, or
- * a version mismatch — a missing file is the normal pre-capture state and is not flagged. Callers
- * use `invalid` to warn (same diagnostics vocabulary) that an existing plate was ignored.
+ * Import a committed plate module (ADR 0034 §3) and hand back its two halves, distinguishing "no
+ * file" from "file present but unreadable". Node executes the module through its own type stripping
+ * — safe because the write path guarantees page scripts author values, never syntax, so the file is
+ * the same trust class as `vite.config.ts`. The mtime query defeats Node's permanent ESM cache; the
+ * retained stale modules are bounded by edit frequency, a dev-server non-cost.
+ *
+ * The plate export is untrusted (hand-edited or from git), so it goes through the SAME validator a
+ * POST does (`parseStoredPlate`): version, post-classify tree shape, and the `<style>`-breakout
+ * guard on the css blob. `invalid` is true ONLY when the file exists but fails to import or its
+ * plate fails to validate — a missing file is the normal pre-capture state and is not flagged.
+ * `hasFixture` reports the `fixture` export's presence (its value may legitimately be
+ * `undefined`).
  */
-function loadStoredPlate(file: string): { stored: StoredPlate | null; invalid: boolean } {
-  let raw: string
+async function importPlateSource(file: string): Promise<{
+  plate: StoredPlate | null
+  fixture: unknown
+  hasFixture: boolean
+  invalid: boolean
+}> {
+  let mtime: number
   try {
-    raw = readFileSync(file, 'utf8')
+    mtime = statSync(file).mtimeMs
   } catch {
     // No file (or unreadable path) — the expected pre-capture state, not a fault.
-    return { stored: null, invalid: false }
+    return { plate: null, fixture: undefined, hasFixture: false, invalid: false }
   }
+  // The revision component covers what mtime cannot: two writes inside the
+  // same millisecond share an mtime, and Node's ESM cache would then serve
+  // the first write's module for the second's read. Every server write and
+  // every watcher event bumps the file's revision.
+  const key = `${mtime}-${fileRevs.get(file) ?? 0}`
+  let ns: Record<string, unknown>
   try {
-    // Committed plates are untrusted (hand-edited or from git), so they go
-    // through the SAME validator a POST does (`parseStoredPlate`): it asserts the
-    // version, the post-classify tree shape, and that the css blob cannot break
-    // out of the rendered `<style>` raw text.
-    const stored = parseStoredPlate(JSON.parse(raw))
-    if (!stored) return { stored: null, invalid: true }
-    return { stored, invalid: false }
+    // @vite-ignore: a runtime file URL for NODE's own loader (type stripping),
+    // never for a bundler to resolve — vitest's transform must leave it alone.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- a dynamic import's namespace; every member is validated below
+    ns = (await import(/* @vite-ignore */ `${pathToFileURL(file).href}?t=${key}`)) as Record<
+      string,
+      unknown
+    >
   } catch {
-    return { stored: null, invalid: true }
+    return { plate: null, fixture: undefined, hasFixture: false, invalid: true }
   }
-}
-
-function readStoredPlate(file: string): StoredPlate | null {
-  return loadStoredPlate(file).stored
+  const plate = ns.plate == null ? null : parseStoredPlate(ns.plate)
+  return {
+    plate,
+    fixture: ns.fixture,
+    hasFixture: 'fixture' in ns,
+    invalid: ns.plate != null && !plate,
+  }
 }
 
 /**

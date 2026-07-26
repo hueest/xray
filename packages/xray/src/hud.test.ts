@@ -59,14 +59,20 @@ interface FakeStores {
   setSites: (entries: Record<string, Partial<MountedPlate>>) => void
   setCoverage: (entries: Record<string, PlateCoverage>) => void
   setExtension: (state: { present: boolean; version?: string; caps: readonly string[] }) => void
-  setFixture: (
-    name: string,
-    status: { participates: boolean; recorded: boolean; replaying: boolean },
-  ) => void
+  setFixture: (name: string, status: FixtureRowStatus) => void
   setDiagnostics: (name: string, lines: string[]) => void
   mode: ModeStore
   replay: ToggleStore
   highlight: ReturnType<typeof vi.fn>
+  recordFixture: ReturnType<typeof vi.fn>
+  recordAllFixtures: ReturnType<typeof vi.fn>
+}
+
+interface FixtureRowStatus {
+  participates: boolean
+  recordable: boolean
+  recorded: boolean
+  replaying: boolean
 }
 
 function makeHook(): FakeStores {
@@ -97,13 +103,12 @@ function makeHook(): FakeStores {
     present: false,
     caps: [],
   }
-  const fixtureStatuses = new Map<
-    string,
-    { participates: boolean; recorded: boolean; replaying: boolean }
-  >()
+  const fixtureStatuses = new Map<string, FixtureRowStatus>()
   const diagnosticsMap = new Map<string, string[]>()
   const replay = makeToggle(false)
   const highlight = vi.fn()
+  const recordFixture = vi.fn(async () => {})
+  const recordAllFixtures = vi.fn(async () => {})
 
   const mode: ModeStore = {
     get: () => modeState,
@@ -159,12 +164,19 @@ function makeHook(): FakeStores {
     diagnostics: { get: (name) => diagnosticsMap.get(name) ?? [], subscribe: sub('diagnostics') },
     fixtures: {
       register: () => () => {},
+      registerSite: () => () => {},
       has: (name) => fixtureStatuses.get(name)?.recorded ?? false,
+      recordedCount: () => [...fixtureStatuses.values()].filter((status) => status.recorded).length,
       status: (name) =>
-        fixtureStatuses.get(name) ?? { participates: false, recorded: false, replaying: false },
+        fixtureStatuses.get(name) ?? {
+          participates: false,
+          recordable: false,
+          recorded: false,
+          replaying: false,
+        },
       read: () => undefined,
-      record: async () => {},
-      recordAll: async () => {},
+      record: recordFixture,
+      recordAll: recordAllFixtures,
       seed: () => {},
       subscribe: sub('fixtures'),
     },
@@ -176,6 +188,8 @@ function makeHook(): FakeStores {
     mode,
     replay,
     highlight,
+    recordFixture,
+    recordAllFixtures,
     setMode: (state) => {
       modeState = state
       notify('mode')
@@ -427,13 +441,21 @@ describe('plates section', () => {
 
   it('fixture badge, replay line, and diagnostics note', async () => {
     const stores = await standardScene()
-    stores.setFixture('hero', { participates: true, recorded: true, replaying: true })
+    // Recorded but NOT participating (plain-children Skeleton with a fixture on
+    // disk): the passive badge shows — the ◆ key is only for participants.
+    stores.setFixture('hero', {
+      participates: false,
+      recordable: false,
+      recorded: true,
+      replaying: true,
+    })
     stores.setDiagnostics('card', ['tree too large: 4913 nodes over the 4096 limit'])
     await tick()
     click(q('.plates-line'))
     await tick()
     const badge = q('.badge.fx')
     expect(badge.getAttribute('title')).toContain('replaying')
+    expect(shadow().querySelector('.key.fx')).toBeNull()
     expect(text('.note.err')).toContain('4913 nodes')
     const replaySwitch = qButton('.switch')
     expect(replaySwitch.getAttribute('aria-checked')).toBe('false')
@@ -441,6 +463,75 @@ describe('plates section', () => {
     await tick()
     expect(stores.replay.get()).toBe(true)
     expect(q('.switch').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('participating rows get the ◆ key: record, re-record, disabled while unrecordable', async () => {
+    const stores = await standardScene()
+    stores.setFixture('hero', {
+      participates: true,
+      recordable: true,
+      recorded: false,
+      replaying: false,
+    })
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    // Participating row: key present (hollow ◇), badge absent.
+    const key = qButton('.key.fx')
+    expect(key.textContent).toBe('◇')
+    expect(shadow().querySelector('.badge.fx')).toBeNull()
+    click(key)
+    expect(stores.recordFixture).toHaveBeenCalledWith('hero')
+    // Recorded: filled ◆, still pressable to re-record.
+    stores.setFixture('hero', {
+      participates: true,
+      recordable: true,
+      recorded: true,
+      replaying: false,
+    })
+    await tick()
+    expect(qButton('.key.fx').textContent).toBe('◆')
+    expect(qButton('.key.fx').disabled).toBe(false)
+    // Not recordable (loading or Light Box): key stays — participation is
+    // stable — but disabled, so the section never jumps.
+    stores.setFixture('hero', {
+      participates: true,
+      recordable: false,
+      recorded: true,
+      replaying: false,
+    })
+    await tick()
+    expect(qButton('.key.fx').disabled).toBe(true)
+  })
+
+  it('record all: enabled by any recordable site, calls recordAll, surfaces failure', async () => {
+    const stores = await standardScene()
+    stores.setFixture('hero', {
+      participates: true,
+      recordable: false,
+      recorded: false,
+      replaying: false,
+    })
+    await tick()
+    click(q('.plates-line'))
+    await tick()
+    // A participating-but-unrecordable page still shows the fixtures line
+    // (stable visibility), with record-all disabled.
+    expect(qButton('.fx-all').disabled).toBe(true)
+    stores.setFixture('hero', {
+      participates: true,
+      recordable: true,
+      recorded: false,
+      replaying: false,
+    })
+    await tick()
+    const all = qButton('.fx-all')
+    expect(all.disabled).toBe(false)
+    stores.recordAllFixtures.mockRejectedValueOnce(new Error('boom: unrecordable'))
+    click(all)
+    await tick()
+    expect(stores.recordAllFixtures).toHaveBeenCalledTimes(1)
+    expect(text('.fx-all-err')).toContain('boom: unrecordable')
   })
 
   it('hovering a row highlights its boundary and unhovering clears it', async () => {

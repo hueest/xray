@@ -128,10 +128,73 @@ export function collectStitchNames(chunks: Chunk[] | null): string[] {
 export type SkeletonRef = (el: Element | null) => void
 export type SkeletonRenderProp<T> = (ctx: { data: T; ref?: SkeletonRef }) => ReactNode
 
+/**
+ * The typed-fixtures drift error (ADR 0031). When a Plate's recorded Fixture type `F` (derived from
+ * the plate module's `fixture` export via the env file's declare block, ADR 0033/0034) no longer
+ * satisfies the `data` prop's type `T`, the `plate` prop's type intersects with this brand and the
+ * assignment fails — so a data-type change that outgrows the committed Fixture surfaces at the
+ * `<Skeleton>` site in the consumer's own compile, with xray not even running. The fix is almost
+ * always to re-record the Fixture.
+ */
+export interface FixtureOutOfDate<F, T> {
+  'xray-fixture-out-of-date': 'the recorded Fixture no longer satisfies this data type: re-record it'
+  recorded: F
+  expected: T
+}
+
+/**
+ * The drift check's projection of a recorded type (ADR 0031 §3) — two transforms, both about what a
+ * SAMPLE can honestly claim:
+ *
+ * - Strip `readonly` deep: the plate module's `as const` fixture export infers readonly everywhere;
+ *   property readonly-ness never affects assignability, but readonly TUPLES do not extend mutable
+ *   `T[]`. Built-ins pass through untouched — mapping over `Date`/`Map`/`Set`/`RegExp` would
+ *   dismember their method surfaces.
+ * - A recorded `null` becomes `never`: GraphQL data uses null for "absent", while consumer types
+ *   spell absence as `?: string` OR `: string | null` — the recording cannot know which, and
+ *   `never` satisfies both (dogfooding caught `ctaLink: null` vs `ctaLink?: string` flagging a
+ *   fresh recording). The cost, accepted like the undefined-key omission: null-related NARROWING of
+ *   a field's type is not caught by the check.
+ */
+type Recorded<T> = T extends null
+  ? never
+  : T extends Date | RegExp | ReadonlyMap<unknown, unknown> | ReadonlySet<unknown>
+    ? T
+    : T extends object
+      ? { -readonly [K in keyof T]: Recorded<T[K]> }
+      : T
+
+/**
+ * The drift check: `unknown` (a no-op intersection) when compatible, the branded error otherwise.
+ * Three gates, in order:
+ *
+ * - `F` is `unknown` (or `any`): no Fixture type is claimed — the bare-`Plate` wildcard, a plate with
+ *   no recorded Fixture, or a cyclic fixture's `as any` fallback. Never error.
+ * - `T` is exactly `undefined`: no `data` prop at this site (the generic default), so Replay has
+ *   nothing to satisfy. Never error.
+ * - Otherwise require `Recorded<F> extends T`: the recorded value must satisfy the declared `data`
+ *   type, since Replay substitutes it in front of the render prop. `F` is the fixture export's `as
+ *   const` type (ADR 0031 §3) — exact literals and tuples, which extend both widened primitives and
+ *   literal-union discriminants, so bare `extends` is sound with no widening policy at all;
+ *   `Recorded` only strips the const-assertion readonly and neutralizes recorded nulls.
+ */
+type FixtureCheck<F, T> = [unknown] extends [F]
+  ? unknown
+  : [T] extends [undefined]
+    ? unknown
+    : [Recorded<F>] extends [T]
+      ? unknown
+      : FixtureOutOfDate<F, T>
+
 /** Fields shared by both `root` variants of `<Skeleton>`. */
-interface SkeletonBase {
-  /** The plate to render while loading, imported from `virtual:xray/plates/<name>`. */
-  plate: Plate
+interface SkeletonBase<T, F> {
+  /**
+   * The plate to render while loading, imported from `virtual:xray/plates/<name>`. When a recorded
+   * Fixture's declare block in the generated `xray-env.gen.d.ts` types the import as `Plate<F>`,
+   * the intersection enforces the typed-fixtures drift check (`FixtureOutOfDate`) against the
+   * `data` prop's `T`.
+   */
+  plate: Plate<F> & FixtureCheck<F, T>
   /**
    * Inline skeleton css for a plate whose styling does NOT flow through the Vite plugin's CSS
    * pipeline — i.e. a runtime-captured plate from `@hueest/xray/core`'s `captureElement` (ADR 0003:
@@ -193,8 +256,12 @@ interface SkeletonBase {
  * - `root="manual"`: no wrapper; the consumer owns the capture root element. This REQUIRES
  *   render-prop children (the only way to hand back the `ref` that writes the boundary marker), so
  *   plain children + `root="manual"` is a type error.
+ *
+ * The second generic `F` is the plate's recorded-Fixture type (typed fixtures, ADR 0031), inferred
+ * from the `plate` prop; its `unknown` default keeps every un-fixture'd call site unchecked. It is
+ * never written explicitly at a call site.
  */
-export type SkeletonProps<T = undefined> = SkeletonBase &
+export type SkeletonProps<T = undefined, F = unknown> = SkeletonBase<T, F> &
   (
     | {
         /** Auto capture root (default): xray inserts a `display:contents` boundary wrapper. */

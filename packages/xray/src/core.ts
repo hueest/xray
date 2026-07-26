@@ -8,8 +8,8 @@
  * `react.core.tsx` stays internal; this surface is what's published.)
  *
  * Use it to capture and render skeletons directly: demos, playgrounds, tests, or a non-React
- * integration. The usual flow is the plugin (browse-time capture into committed `plates/`) plus an
- * adapter's `<Skeleton>`; this is the layer beneath both, for when you want to drive capture
+ * integration. The usual flow is the plugin (browse-time capture into committed `src/plates/`) plus
+ * an adapter's `<Skeleton>`; this is the layer beneath both, for when you want to drive capture
  * yourself at runtime.
  *
  * Two-artifact contract (ADR 0026): capture produces the structural TREE (`Plate`) and its scoped

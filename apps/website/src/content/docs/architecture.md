@@ -11,7 +11,7 @@ browser and no fixed-height or absolute-positioning hacks.
 The system is two halves joined by one artifact:
 
 1. **Capture** (dev only) turns a live component subtree into a committed
-   `plates/<name>.json` file — the Plate.
+   `src/plates/<name>.ts` file, the Plate.
 2. **Render** (dev and production) turns that file into the skeleton on the
    page.
 
@@ -41,7 +41,7 @@ flowchart TD
     serialize["Serialize — the sole projection<br/>realize annotations · Classify rules (ADR 0007) ·<br/>Gate each View by @media (ADR 0004)"]
     post["POST /__xray<br/>{ plate, diagnostics? }"]
     write["plugin validates (parseStoredPlate — ADR 0023)<br/>and writes the file"]
-    artifact[("plates/&lt;name&gt;.json<br/>the committed artifact")]
+    artifact[("src/plates/&lt;name&gt;.ts<br/>the committed artifact")]
     feedback["Blink on the captured element ·<br/>Hot-swap (tree via dev store, css via CSS-HMR)"]
 
     ready --> settle --> collect --> measure --> bundle --> distil --> serialize --> post --> write
@@ -109,7 +109,7 @@ store, the css through CSS-HMR — with no page reload and no capture re-fire
 
 ```mermaid
 flowchart TD
-    artifact[("plates/&lt;name&gt;.json")]
+    artifact[("src/plates/&lt;name&gt;.ts")]
     vm["virtual:xray/plates/&lt;name&gt;<br/>(Bake — ADR 0026)"]
     tree["tree-only Plate, lowered to Chunk[]<br/>baked into the importing JS chunk (ADR 0008)"]
     css["side-effect imports:<br/>virtual:xray/base.css · virtual:xray/plates/&lt;name&gt;.css<br/>→ Vite CSS pipeline → css asset, BASE deduped once"]
@@ -212,8 +212,8 @@ generated from source.
 Two plugins ship in one call (the vite-plugin-pwa pattern):
 
 - **`xray:data`** (always on) owns the virtual modules in dev and build:
-  `resolveId`/`load` read the committed `plates/<name>.json` and emit the Bake —
-  tree-only default export plus the `base.css` and plate `.css` imports.
+  `resolveId`/`load` read the committed `src/plates/<name>.ts` and emit the Bake:
+  a tree-only default export plus the `base.css` and Plate `.css` imports.
 - **`xray:dev`** (`apply: 'serve'`) owns all capture machinery and is excluded
   from production builds: it injects the dev client via `transformIndexHtml`,
   serves `POST /__xray` via `configureServer`, and aliases
@@ -249,9 +249,11 @@ would remount the capture boundary and re-fire capture
   derived width bands, then ends the Session itself
   ([ADR 0010](https://github.com/hueest/xray/blob/main/docs/adr/0010-capture-all-views-via-extension.md),
   [ADR 0030](https://github.com/hueest/xray/blob/main/docs/adr/0030-dev-bridge-protocol.md)).
-- **Fixtures**: Record a Skeleton's render-input `data` to a sidecar and Replay
-  it later, so hard-to-reproduce states can be re-captured on demand
-  ([ADR 0015](https://github.com/hueest/xray/blob/main/docs/adr/0015-fixtures-dev-only-record-and-replay.md)).
+- **Fixtures**: Record a Skeleton's render-input `data` into the plate module
+  (its `fixture` export) and Replay it later, so hard-to-reproduce states can
+  be re-captured on demand
+  ([ADR 0015](https://github.com/hueest/xray/blob/main/docs/adr/0015-fixtures-dev-only-record-and-replay.md),
+  [ADR 0034](https://github.com/hueest/xray/blob/main/docs/adr/0034-plate-modules.md)).
 
 ## Theming
 

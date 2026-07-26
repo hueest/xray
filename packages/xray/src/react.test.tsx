@@ -150,9 +150,12 @@ function installFixtureHook(opts: {
     recordMode: opts.recordMode ?? 'manual',
     fixtures: {
       register,
+      registerSite: () => () => {},
       has: (name: string) => recorded.has(name),
+      recordedCount: () => recorded.size,
       status: (name: string) => ({
         participates: liveData.has(name),
+        recordable: liveData.has(name),
         recorded: recorded.has(name),
         replaying: replayValue && recorded.has(name),
       }),

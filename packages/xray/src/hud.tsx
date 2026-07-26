@@ -173,8 +173,32 @@ function Hud(props: { hook: CaptureHook }) {
   })
   const fixtureStatus = (name: string) => {
     fixturesTick()
-    return hook.fixtures?.status(name) ?? { participates: false, recorded: false, replaying: false }
+    return (
+      hook.fixtures?.status(name) ?? {
+        participates: false,
+        recordable: false,
+        recorded: false,
+        replaying: false,
+      }
+    )
   }
+  // Cleared on the next press; devalue's unrecordable-data errors land here.
+  const [fxError, setFxError] = createSignal<{ name: string; msg: string } | undefined>()
+  const onRowFixture = (name: string) => {
+    setFxError(undefined)
+    void hook.fixtures?.record(name).catch((error: unknown) => {
+      setFxError({ name, msg: error instanceof Error ? error.message : String(error) })
+    })
+  }
+  const onRecordAll = () => {
+    setFxError(undefined)
+    void hook.fixtures?.recordAll().catch((error: unknown) => {
+      setFxError({ name: '*', msg: error instanceof Error ? error.message : String(error) })
+    })
+  }
+  const anyRecordable = createMemo(() =>
+    mountedNames().some((name) => fixtureStatus(name).recordable),
+  )
   const diagnosticLines = (name: string): readonly string[] => {
     diagnosticsTick()
     return hook.diagnostics?.get(name) ?? []
@@ -193,12 +217,16 @@ function Hud(props: { hook: CaptureHook }) {
     }
     return { total, covered, gaps: total - covered, recordedFixtures }
   })
-  const anyFixture = createMemo(
-    () =>
-      totals().recordedFixtures > 0 ||
-      diskNames().some((name) => fixtureStatus(name).recorded) ||
-      mountedNames().some((name) => fixtureStatus(name).participates),
-  )
+  // The store count keeps the footer visible while a Fixture exists whose
+  // name is in neither the row nor the disk lists (a light-boxed participant,
+  // coverage not yet seeded); participation covers nothing-recorded-yet.
+  const anyFixture = createMemo(() => {
+    fixturesTick()
+    return (
+      (hook.fixtures?.recordedCount() ?? 0) > 0 ||
+      mountedNames().some((name) => fixtureStatus(name).participates)
+    )
+  })
   const nothingCaptured = () => mountedNames().length > 0 && totals().covered === 0 && !recording()
 
   // ── control enable/disable (the one-mode matrix, rendered) ────────────────
@@ -472,7 +500,7 @@ function Hud(props: { hook: CaptureHook }) {
                 >
                   <div class="top">
                     <span class="name">{name}</span>
-                    <Show when={fx().recorded}>
+                    <Show when={fx().recorded && !fx().participates}>
                       <span
                         class="badge fx"
                         title={fx().replaying ? 'fixture · replaying' : 'fixture recorded'}
@@ -495,6 +523,30 @@ function Hud(props: { hook: CaptureHook }) {
                     </Show>
                     <span class="spacer" />
                     <span class="keys">
+                      <Show when={fx().participates}>
+                        <button
+                          type="button"
+                          class={['key', 'fx', { 'on-fx': fx().recorded, lit: fx().replaying }]}
+                          disabled={!fx().recordable}
+                          title={
+                            !fx().recordable
+                              ? 'waiting for live data — record when content renders'
+                              : fx().replaying
+                                ? 'replaying · press to re-record from live data'
+                                : fx().recorded
+                                  ? 're-record fixture from live data'
+                                  : 'record fixture from live data'
+                          }
+                          aria-label={
+                            fx().recorded
+                              ? `Re-record fixture for ${name}`
+                              : `Record fixture for ${name}`
+                          }
+                          onClick={() => onRowFixture(name)}
+                        >
+                          {fx().recorded ? '◆' : '◇'}
+                        </button>
+                      </Show>
                       <button
                         type="button"
                         class={['key', { 'on-rec': recordNames()?.has(name) ?? false }]}
@@ -549,6 +601,9 @@ function Hud(props: { hook: CaptureHook }) {
                   <Show when={diag().length > 0}>
                     <div class="note err">⚠ {diag()[0]}</div>
                   </Show>
+                  <Show when={fxError()?.name === name}>
+                    <div class="note err">⚠ fixture: {fxError()?.msg}</div>
+                  </Show>
                 </div>
               )
             }}
@@ -578,7 +633,6 @@ function Hud(props: { hook: CaptureHook }) {
           <div class="hr" />
           <div class="replay-line">
             replay fixtures
-            <span class="spacer" />
             <button
               type="button"
               class={['switch', { on: replayOn() }]}
@@ -587,7 +641,24 @@ function Hud(props: { hook: CaptureHook }) {
               aria-label="Replay fixtures"
               onClick={() => hook.replay?.set(!replayOn())}
             />
+            <span class="spacer" />
+            <button
+              type="button"
+              class="fx-all"
+              disabled={!anyRecordable()}
+              title={
+                anyRecordable()
+                  ? 'record a fixture for every mounted plate with live data'
+                  : 'no live data in scope — shows when render-prop content renders'
+              }
+              onClick={onRecordAll}
+            >
+              record all ◆
+            </button>
           </div>
+          <Show when={fxError()?.name === '*'}>
+            <div class="note err fx-all-err">⚠ fixture: {fxError()?.msg}</div>
+          </Show>
         </Show>
       </Show>
     </div>
@@ -725,6 +796,9 @@ const STYLE = `
   .key.on-rec .dot { opacity: 1; animation: xr-pulse 1.6s infinite }
   .key.on-play { border-color: var(--steel); box-shadow: 0 0 8px oklch(0.62 0.11 246 / 0.45), inset 0 1px 2px oklch(0.05 0.01 256 / 0.8); background: oklch(0.62 0.11 246 / 0.14) }
   .key.on-play svg path { fill: var(--bone-solid); stroke: var(--bone-solid) }
+  .key.fx { font-size: 9.5px; line-height: 1; color: var(--muted) }
+  .key.fx.on-fx { color: var(--steel) }
+  .key.fx.lit { border-color: var(--steel); box-shadow: 0 0 8px oklch(0.62 0.11 246 / 0.45), inset 0 1px 2px oklch(0.05 0.01 256 / 0.8); background: oklch(0.62 0.11 246 / 0.14); color: var(--bone-solid) }
 
   .segs { display: flex; margin-top: 6px }
   .seg {
@@ -739,6 +813,10 @@ const STYLE = `
 
   .note { margin-top: 4px; font-size: 10px; color: var(--muted); line-height: 1.5 }
   .note.err { color: var(--crimson) }
+
+  .fx-all { font-size: 10.5px; color: var(--steel) }
+  .fx-all:hover { color: var(--bone-solid) }
+  .fx-all-err { margin: 0; padding: 0 16px 8px }
 
   .disk-label {
     padding: 7px 16px 3px; font-size: 9.5px; letter-spacing: 0.06em;
