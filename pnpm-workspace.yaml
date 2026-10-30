@@ -8,5 +8,11 @@ allowBuilds:
   sharp: true
   spawn-sync: true
   workerd: true
-patchedDependencies:
-  '@astrojs/starlight@0.41.3': patches/@astrojs__starlight@0.41.3.patch
+overrides:
+  # Astro's checker needs the same runtime major as its @emnapi/core.
+  '@napi-rs/wasm-runtime@1.2.4>@emnapi/runtime:peer': 1.11.3
+permissions:
+  '@solidjs/web':
+    skills: true
+  solid-js:
+    skills: true

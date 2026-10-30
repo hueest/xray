@@ -56,7 +56,7 @@ two via pure helpers the core exposes:
    toggles through the framework's reactivity primitive, with a **server
    snapshot equal to the static prop plate**.
 3. **Drive capture** — on content-ready, call `__XRAY__.captured(name,
-rootEl, opts)`; dispose on unmount. A client-only effect.
+   rootEl, opts)`; dispose on unmount. A client-only effect.
 4. **Be the readiness/suspense boundary** per ADR 0002.
 
 ## SSR

@@ -2,40 +2,30 @@
 import EditLink from '@astrojs/starlight/components/EditLink.astro'
 import LastUpdated from '@astrojs/starlight/components/LastUpdated.astro'
 import Pagination from '@astrojs/starlight/components/Pagination.astro'
-import config from 'virtual:starlight/user-config'
-import { Icon } from '@astrojs/starlight/components'
 import { GITHUB } from '../lib/site.ts'
 
 const isHome = Astro.url.pathname === '/'
 ---
 
-{
-  isHome ? (
-    <footer class="site-footer">
-      <span>
-        <a href={`${GITHUB}/blob/main/LICENSE`}>MIT License</a> · by
-        <a class="site-footer__hueest" href="https://hueest.com">
-          Hueest
-        </a>
-      </span>
-      <a href={GITHUB}>GitHub</a>
-    </footer>
-  ) : (
-    <footer class="starlight-footer sl-flex">
-      <div class="meta sl-flex">
-        <EditLink />
-        <LastUpdated />
-      </div>
-      <Pagination />
-
-      {config.credits && (
-        <a class="kudos sl-flex" href="https://starlight.astro.build">
-          <Icon name="starlight" /> {Astro.locals.t('builtWithStarlight.label')}
-        </a>
-      )}
-    </footer>
-  )
-}
+{isHome ? (
+  <footer class="site-footer">
+    <span>
+      <a href={`${GITHUB}/blob/main/LICENSE`}>MIT License</a> · by
+      <a class="site-footer__hueest" href="https://hueest.com">
+        Hueest
+      </a>
+    </span>
+    <a href={GITHUB}>GitHub</a>
+  </footer>
+) : (
+  <footer class="starlight-footer sl-flex">
+    <div class="meta sl-flex">
+      <EditLink />
+      <LastUpdated />
+    </div>
+    <Pagination />
+  </footer>
+)}
 
 <style>
   @layer starlight.core {
@@ -53,24 +43,6 @@ const isHome = Astro.url.pathname === '/'
     }
     .meta > :global(p:only-child) {
       margin-inline-start: auto;
-    }
-
-    .kudos {
-      align-items: center;
-      gap: 0.5em;
-      margin: 1.5rem auto;
-      font-size: var(--sl-text-xs);
-      text-decoration: none;
-      color: var(--sl-color-gray-3);
-    }
-    .kudos:hover {
-      color: var(--sl-color-white);
-    }
-  }
-
-  @layer starlight.components {
-    .kudos :global(svg) {
-      color: var(--sl-color-orange);
     }
   }
 

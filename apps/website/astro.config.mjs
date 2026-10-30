@@ -50,10 +50,10 @@ export default defineConfig({
   integrations: [
     // Must run before starlight so mermaid fences are claimed ahead of
     // expressive-code; autoTheme follows Starlight's data-theme.
-    mermaid({ autoTheme: true }),
+    // mermaid 12 wraps labels much narrower by default, down to a word per line.
+    mermaid({ autoTheme: true, mermaidConfig: { flowchart: { wrappingWidth: 240 } } }),
     starlight({
       title: 'xray',
-      tagline: 'Auto-captured skeleton loading screens for Vite.',
       social: [{ icon: 'github', label: 'GitHub', href: GITHUB }],
       // Just the brand theme now — fonts come from the Astro Fonts API.
       customCss: ['./src/styles/theme.css'],

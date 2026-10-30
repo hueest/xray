@@ -6,6 +6,9 @@ import solid from 'vite-plugin-solid'
 // hud sources and their tests — the React adapters keep the default TSX transform.
 export default defineConfig({
   plugins: [solid({ include: ['**/hud.tsx', '**/hud.test.tsx'] })],
+  // @solidjs/web 2.0 points its `node` condition at the server build, where
+  // `render` throws. The HUD tests mount for real, so they need the browser one.
+  resolve: { conditions: ['development', 'browser'] },
   test: {
     // vite-plugin-solid injects `environment: 'jsdom'` when none is set; this
     // package runs node by default with per-file `@vitest-environment happy-dom`

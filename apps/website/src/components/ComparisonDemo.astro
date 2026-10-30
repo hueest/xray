@@ -14,11 +14,9 @@
   role="group"
   aria-label="Interactive demo: skeleton vs. live component"
 >
-  {
-    /* The "after": the real product page. Its visible "headings" are deliberately NOT <h*> —
+  {/* The "after": the real product page. Its visible "headings" are deliberately NOT <h*> —
       the live side sits in the a11y tree, so real headings would inject "Difference Engine
-      No. 2" / "You might also like" into the page outline before the first content <h2>. */
-  }
+      No. 2" / "You might also like" into the page outline before the first content <h2>. */}
   <div class="compare-after">
     <article class="product">
       <div class="product-main">
@@ -33,7 +31,9 @@
           <p class="product-desc">
             Hand-cranked, 8,000 parts, computes polynomial tables to 31 digits without a single bug.
           </p>
-          <button class="product-buy" type="button" tabindex="-1">Add to cart</button>
+          <button class="product-buy" type="button" tabindex="-1">
+            Add to cart
+          </button>
         </div>
       </div>
 
@@ -65,14 +65,16 @@
     </article>
   </div>
 
-  {
-    /* The bones overlay: in the template so the scoped styles apply (a runtime-created node
-      wouldn't carry Astro's scope class). Hidden until the script fills it. */
-  }
+  {/* The bones overlay: in the template so the scoped styles apply (a runtime-created node
+      wouldn't carry Astro's scope class). Hidden until the script fills it. */}
   <div class="compare-before" aria-hidden="true" hidden></div>
 
-  <span class="compare-tag compare-tag--before" aria-hidden="true">skeleton</span>
-  <span class="compare-tag compare-tag--after" aria-hidden="true">live component</span>
+  <span class="compare-tag compare-tag--before" aria-hidden="true">
+    skeleton
+  </span>
+  <span class="compare-tag compare-tag--after" aria-hidden="true">
+    live component
+  </span>
 
   <button
     type="button"

@@ -9,11 +9,12 @@ import type { PlateRule } from './plate.ts'
 
 const FONT_SIZE_PX = 16
 
+const toPx = (value: string, unit: string) =>
+  Number.parseFloat(value) * (unit === 'px' ? 1 : FONT_SIZE_PX)
+
 /** A breakpoint is the first integer px width of the View ABOVE the boundary. */
 function thresholdsOf(condition: string): number[] {
   const out: number[] = []
-  const toPx = (value: string, unit: string) =>
-    Number.parseFloat(value) * (unit === 'px' ? 1 : FONT_SIZE_PX)
   const push = (raw: number, exclusiveBelow: boolean) => {
     // min-width: X / width >= X → View starts at X.
     // max-width: Y / width <= Y → the NEXT View starts just above Y.

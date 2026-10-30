@@ -13,6 +13,7 @@
   "rules": {
     "typescript/no-unnecessary-type-parameters": "warn",
     "typescript/no-unsafe-type-assertion": "warn",
+    "eslint/no-irregular-whitespace": ["error", { "skipComments": true }],
     "eslint/no-underscore-dangle": [
       "error",
       {
@@ -27,5 +28,13 @@
       }
     ]
   },
-  "ignorePatterns": ["dist"]
+  "ignorePatterns": ["dist"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "unicorn/consistent-function-scoping": "off"
+      }
+    }
+  ]
 }

@@ -13,10 +13,8 @@ import Default from '@astrojs/starlight/components/Header.astro'
 const isHome = Astro.url.pathname === '/'
 ---
 
-{
-  !isHome && (
-    <Default>
-      <slot />
-    </Default>
-  )
-}
+{!isHome && (
+  <Default>
+    <slot />
+  </Default>
+)}

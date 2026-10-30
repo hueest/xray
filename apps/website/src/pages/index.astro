@@ -168,29 +168,29 @@ export default async function ProductDetails({ params }) {
       </li>
       <li>
         <strong>Wrap what loads</strong> in <code>&lt;Skeleton&gt;</code>. It slots into whatever
-        you fetch with: pass the Plate and a <code>loading</code> boolean, or <code>suspense</code> for
-        anything that suspends.
+        you fetch with: pass the Plate and a <code>loading</code> boolean, or <code>suspense</code>{' '}
+        for anything that suspends.
         <Tabs>
-          {
-            wrapTabs.map((tab) => (
-              <TabItem label={tab.label}>
-                <Code lang="tsx" code={tab.code} meta={tab.meta} />
-              </TabItem>
-            ))
-          }
+          {wrapTabs.map((tab) => (
+            <TabItem label={tab.label}>
+              <Code lang="tsx" code={tab.code} meta={tab.meta} />
+            </TabItem>
+          ))}
         </Tabs>
       </li>
       <li>
-        <strong>Browse your dev server.</strong> Capture starts off: tick <strong>Capture</strong> in
-        the HUD (or pass <code>capture: true</code>) and, when the component renders for real, xray
-        captures its Plate into <code>src/plates/</code>. The HUD tracks Coverage across every width
-        band; commit the Plate and you are shipping faithful skeletons.
+        <strong>Browse your dev server.</strong> Capture starts off: tick <strong>Capture</strong>{' '}
+        in the HUD (or pass <code>capture: true</code>) and, when the component renders for real,
+        xray captures its Plate into <code>src/plates/</code>. The HUD tracks Coverage across every
+        width band; commit the Plate and you are shipping faithful skeletons.
         <Hud />
       </li>
     </ol>
   </Steps>
 
-  <h2>The skeleton <em>is</em> your component</h2>
+  <h2>
+    The skeleton <em>is</em> your component
+  </h2>
 
   <p>
     A skeleton is the cheapest wait you can give a user: it shows the shape of what's coming and
@@ -225,16 +225,17 @@ export default async function ProductDetails({ params }) {
       <dt class="flow-term">Capture</dt>
       <dd class="flow-def">
         The first time that component renders in dev, xray walks the DOM it produced and copies the
-        author CSS that styles it, <code>@media</code> rules and all. It keeps the rules rather than frozen
-        pixels, which is what lets the skeleton reflow later.
+        author CSS that styles it, <code>@media</code> rules and all. It keeps the rules rather than
+        frozen pixels, which is what lets the skeleton reflow later.
       </dd>
     </div>
     <div class="flow-row">
       <dt class="flow-term">Store</dt>
       <dd class="flow-def">
         The result is written to its <em>Plate</em>: a generated TypeScript module at
-        <code>src/plates/&lt;name&gt;.ts</code> you commit with the component. A resize captures another
-        View into the same Plate, and any drift shows up as a diff in review, never a silent lie in production.
+        <code>src/plates/&lt;name&gt;.ts</code> you commit with the component. A resize captures
+        another View into the same Plate, and any drift shows up as a diff in review, never a silent
+        lie in production.
       </dd>
     </div>
     <div class="flow-row">
@@ -247,8 +248,9 @@ export default async function ProductDetails({ params }) {
     <div class="flow-row">
       <dt class="flow-term">Render</dt>
       <dd class="flow-def">
-        While data loads, <code>&lt;Skeleton&gt;</code> paints that HTML and CSS. Every box lands exactly
-        where the real content will, and the bones reflow like the component until it takes over.
+        While data loads, <code>&lt;Skeleton&gt;</code> paints that HTML and CSS. Every box lands
+        exactly where the real content will, and the bones reflow like the component until it takes
+        over.
       </dd>
     </div>
   </dl>
@@ -262,7 +264,9 @@ export default async function ProductDetails({ params }) {
         A skeleton reserves the exact box its content will fill. Nested skeletons (Stitches) resolve
         in any order without reflowing the page, and each one captures and updates independently.
       </p>
-      <p class="feature-link"><a href="/guides/nested-skeletons/">Nested skeletons →</a></p>
+      <p class="feature-link">
+        <a href="/guides/nested-skeletons/">Nested skeletons →</a>
+      </p>
     </li>
     <li>
       <h3>Flash prevention</h3>
@@ -270,16 +274,20 @@ export default async function ProductDetails({ params }) {
         A 250ms grace delay keeps fast loads skeleton-free; a 600ms minimum keeps a shown skeleton
         from blinking away. Three CSS tokens, tunable globally or per plate.
       </p>
-      <p class="feature-link"><a href="/guides/display-timing/">Display timing →</a></p>
+      <p class="feature-link">
+        <a href="/guides/display-timing/">Display timing →</a>
+      </p>
     </li>
     <li>
       <h3>Breakpoint detection</h3>
       <p>
         Views are captured per width band, derived from the component's own <code>@media</code>
-        rules and <code>matchMedia</code> calls. The browser selects the active View with plain CSS: no
-        runtime width measurement, SSR-safe.
+        rules and <code>matchMedia</code> calls. The browser selects the active View with plain CSS:
+        no runtime width measurement, SSR-safe.
       </p>
-      <p class="feature-link"><a href="/guides/responsive-views/">Responsive & Views →</a></p>
+      <p class="feature-link">
+        <a href="/guides/responsive-views/">Responsive & Views →</a>
+      </p>
     </li>
     <li>
       <h3>In-session capture</h3>
@@ -288,7 +296,9 @@ export default async function ProductDetails({ params }) {
         browser. The HUD shows per-Plate Coverage; Light Box forces every mounted skeleton on for
         inspection.
       </p>
-      <p class="feature-link"><a href="/guides/hud-light-box/">The HUD & Light Box →</a></p>
+      <p class="feature-link">
+        <a href="/guides/hud-light-box/">The HUD & Light Box →</a>
+      </p>
     </li>
     <li>
       <h3>Automated width sweep</h3>
@@ -296,7 +306,9 @@ export default async function ProductDetails({ params }) {
         With the companion extension connected, one press of record drives the viewport through
         every derived breakpoint, captures each View, and writes the plates: sweep, save, done.
       </p>
-      <p class="feature-link"><a href="/guides/sweep/">The Sweep →</a></p>
+      <p class="feature-link">
+        <a href="/guides/sweep/">The Sweep →</a>
+      </p>
     </li>
     <li>
       <h3>CSS-based config</h3>
@@ -304,13 +316,15 @@ export default async function ProductDetails({ params }) {
         Tokens cascade from <code>:root</code>, per plate, per bone kind, or per instance, with
         <code>light-dark()</code> for themes. No props, no JS config.
       </p>
-      <p class="feature-link"><a href="/guides/theming/">Theming →</a></p>
+      <p class="feature-link">
+        <a href="/guides/theming/">Theming →</a>
+      </p>
     </li>
     <li>
       <h3>Custom bones</h3>
       <p>
-        <code>data-xr-ignore</code> drops decoration, <code>data-xr-bone-kind</code> collapses a widget
-        to a single bone, and a programmable walker applies project-wide rules.
+        <code>data-xr-ignore</code> drops decoration, <code>data-xr-bone-kind</code> collapses a
+        widget to a single bone, and a programmable walker applies project-wide rules.
       </p>
       <p class="feature-link">
         <a href="/guides/capture-customization/">Capture customization →</a>
@@ -322,7 +336,9 @@ export default async function ProductDetails({ params }) {
         Record a component's render input once; replay it so every re-capture renders the same
         state. A dev-only sidecar committed next to the Plate.
       </p>
-      <p class="feature-link"><a href="/guides/fixtures/">Fixtures →</a></p>
+      <p class="feature-link">
+        <a href="/guides/fixtures/">Fixtures →</a>
+      </p>
     </li>
   </ul>
 

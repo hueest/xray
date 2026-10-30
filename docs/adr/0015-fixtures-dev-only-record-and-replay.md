@@ -45,7 +45,7 @@ Key choices:
   it sits on exactly one side of the wire.
 - **Control mirrors the `capture` option**: config sets the boot state, the HUD is
   per-tab authority. `record` defaults to **`'manual'`** (`manual | first-ready |
-always`) — no auto-record default, so live app data is never silently committed.
+  always`) — no auto-record default, so live app data is never silently committed.
   `replay` is `false | prefer | missing-only`, where **`missing ≡ nullish-only`**
   (an empty array/object is _present_; only true absence falls back to the
   Fixture, so genuine empty-states stay capturable).

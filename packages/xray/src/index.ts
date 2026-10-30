@@ -186,6 +186,8 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
   const fixtureTypes = !options.noTypes
   let root = process.cwd()
 
+  const dir = () => resolve(root, platesDir)
+
   // One module per Plate (ADR 0034): the StoredPlate structure as the default
   // export, the recorded Fixture (if any) as `export const fixture`. All
   // generated ambient declarations live in the one env file (`envPath`).
@@ -288,7 +290,6 @@ export function xrayVitePlugin(options: XrayOptions = {}): Plugin[] {
       // capture does. (Our own POST writes also fire this; the client dedupes
       // identical plates, so the announce duplicate is a no-op, and the
       // repeated invalidation below is idempotent.)
-      const dir = () => resolve(root, platesDir)
       // The env file (ADR 0032/0034): one generated d.ts whose triple-slash
       // reference wires the `virtual:xray/plates/*` wildcard with zero tsconfig
       // edits and whose per-plate declarations carry each recorded Fixture's
